@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Plane, Eye, EyeOff, Lock } from 'lucide-react';
 
 // The app password — change this to your desired password
-const APP_PASSWORD = ;
+const APP_PASSWORD = "0000";
 
 const AUTH_KEY = 'tripplanner_auth';
 const REMEMBER_KEY = 'tripplanner_remember';
@@ -80,7 +80,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
             <Plane className="w-10 h-10 text-white" />
           </div>
           <h1 className="text-2xl font-bold text-gray-900">Our Travel Diary</h1>
-          <p className="text-sm text-gray-500 mt-1">Enter password to continue</p>
+          <p className="text-sm text-gray-500 mt-1">Enter password to continue &#40;0000&#41;</p>
         </div>
 
         {/* Login Form */}

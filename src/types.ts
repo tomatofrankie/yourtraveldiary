@@ -1,9 +1,17 @@
+export interface DestinationSegment {
+  id: string;
+  name: string;
+  startDate: string;
+  endDate: string;
+}
+
 export interface Trip {
   id: string;
   name: string;
   startDate: string;
   endDate: string;
-  destination: string;
+  destination: string; // Keep for backward compatibility (primary destination)
+  destinations: DestinationSegment[]; // New field for multiple destinations
   themeColor?: string;
 }
 

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Plane, Calendar, DollarSign, ShoppingBag, Info, Plus, ChevronDown, X, Download, Upload, Share2, RefreshCw, LogOut } from 'lucide-react';
-import { Trip } from './types';
+import { Trip, DestinationSegment } from './types';
 import { tripStorage, scheduleStorage, expenseStorage, shoppingStorage, travelInfoStorage, generateId, syncFromFirestore } from './utils/storage';
 import { Homepage } from './components/Homepage';
 import { TravelSchedule } from './components/TravelSchedule';
@@ -103,15 +103,50 @@ export function App() {
     setTrips(allTrips);
   };
 
+  const [newTripDestinations, setNewTripDestinations] = useState<DestinationSegment[]>([]);
+
+  const addDestinationSegment = () => {
+    const newSegment: DestinationSegment = {
+      id: generateId(),
+      name: '',
+      startDate: formData.startDate || '',
+      endDate: formData.endDate || '',
+    };
+    setNewTripDestinations([...newTripDestinations, newSegment]);
+  };
+
+  const updateDestinationSegment = (index: number, field: keyof DestinationSegment, value: string) => {
+    const segments = [...newTripDestinations];
+    segments[index] = { ...segments[index], [field]: value };
+    setNewTripDestinations(segments);
+  };
+
+  const removeDestinationSegment = (index: number) => {
+    const segments = [...newTripDestinations];
+    segments.splice(index, 1);
+    setNewTripDestinations(segments);
+  };
+
   const handleCreateTrip = (e: React.FormEvent) => {
     e.preventDefault();
     
+    // Ensure we have at least one destination
+    const destinations = newTripDestinations.length > 0 
+      ? newTripDestinations 
+      : [{ 
+          id: generateId(), 
+          name: formData.destination!, 
+          startDate: formData.startDate!, 
+          endDate: formData.endDate! 
+        }];
+
     const newTrip: Trip = {
       id: generateId(),
       name: formData.name!,
       startDate: formData.startDate!,
       endDate: formData.endDate!,
-      destination: formData.destination!,
+      destination: destinations[0].name,
+      destinations: destinations,
     };
 
     tripStorage.save(newTrip);
@@ -128,6 +163,7 @@ export function App() {
       endDate: '',
       destination: '',
     });
+    setNewTripDestinations([]);
     setShowTripForm(false);
   };
 
@@ -335,6 +371,14 @@ export function App() {
         startDate: tripData.startDate || '',
         endDate: tripData.endDate || '',
         destination: tripData.destination || '',
+        destinations: tripData.destinations || [
+          {
+            id: generateId(),
+            name: tripData.destination || '',
+            startDate: tripData.startDate || '',
+            endDate: tripData.endDate || '',
+          }
+        ],
         themeColor: tripData.themeColor,
       };
 
@@ -569,9 +613,9 @@ export function App() {
                     setShowTripSelector(!showTripSelector);
                     setShowImportExport(false);
                   }}
-                  className="flex items-center gap-1 sm:gap-2 px-2 sm:px-4 py-1.5 sm:py-2 bg-purple-100 rounded-lg hover:bg-purple-200 transition-colors max-w-[120px] sm:max-w-[200px]"
+                  className="flex items-center gap-1 sm:gap-2 px-2 sm:px-4 py-1.5 sm:py-2 bg-purple-100 rounded-lg hover:bg-purple-200 transition-colors max-w-[140px] sm:max-w-[220px]"
                 >
-                  <span className="text-xs sm:text-sm font-medium text-purple-700 truncate">
+                  <span className="text-xs sm:text-sm font-medium text-purple-700 truncate flex-1">
                     {currentTrip ? currentTrip.name : 'Select Trip'}
                   </span>
                   <ChevronDown className="w-3 h-3 sm:w-4 sm:h-4 text-purple-500 flex-shrink-0" />
@@ -594,8 +638,16 @@ export function App() {
                               currentTripId === trip.id ? 'text-purple-600 font-medium' : 'text-gray-700'
                             }`}
                           >
-                            <div className="text-sm truncate">{trip.name}</div>
-                            <div className="text-xs text-gray-500 truncate">{trip.destination}</div>
+                            <div className="text-sm font-medium break-words whitespace-normal">{trip.name}</div>
+                            <div className="text-xs text-gray-500 break-words whitespace-normal leading-snug">
+                              {trip.destinations && trip.destinations.length > 0
+                                ? trip.destinations
+                                    .slice()
+                                    .sort((a, b) => a.startDate.localeCompare(b.startDate))
+                                    .map(d => d.name)
+                                    .join(' → ')
+                                : trip.destination}
+                            </div>
                           </button>
                           <button
                             onClick={() => deleteTrip(trip.id)}
@@ -675,16 +727,77 @@ export function App() {
                 />
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Destination</label>
-                <input
-                  type="text"
-                  required
-                  value={formData.destination}
-                  onChange={(e) => setFormData({ ...formData, destination: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-400 focus:border-transparent"
-                  placeholder="e.g., Paris, France"
-                />
+              <div className="space-y-4">
+                <label className="block text-sm font-medium text-gray-700">Destinations</label>
+                {newTripDestinations.map((segment, index) => (
+                  <div key={segment.id} className="bg-gray-50 p-3 rounded-lg border border-gray-200 relative">
+                    <button
+                      type="button"
+                      onClick={() => removeDestinationSegment(index)}
+                      className="absolute top-2 right-2 text-red-500 hover:text-red-700"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                    <div className="space-y-3">
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Destination Name</label>
+                        <input
+                          type="text"
+                          required
+                          value={segment.name}
+                          onChange={(e) => updateDestinationSegment(index, 'name', e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-400 focus:border-transparent text-sm"
+                          placeholder="e.g., Tokyo, Japan"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Start Date</label>
+                          <input
+                            type="date"
+                            required
+                            value={segment.startDate}
+                            onChange={(e) => updateDestinationSegment(index, 'startDate', e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-400 focus:border-transparent text-sm"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">End Date</label>
+                          <input
+                            type="date"
+                            required
+                            value={segment.endDate}
+                            onChange={(e) => updateDestinationSegment(index, 'endDate', e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-400 focus:border-transparent text-sm"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                
+                {newTripDestinations.length === 0 && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Primary Destination</label>
+                    <input
+                      type="text"
+                      required
+                      value={formData.destination}
+                      onChange={(e) => setFormData({ ...formData, destination: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-400 focus:border-transparent"
+                      placeholder="e.g., Paris, France"
+                    />
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  onClick={addDestinationSegment}
+                  className="w-full flex items-center justify-center gap-2 px-3 py-2 border border-dashed border-gray-300 rounded-lg hover:bg-gray-50 text-gray-600 hover:text-gray-900"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span className="text-sm font-medium">Add Multiple Destinations</span>
+                </button>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -735,7 +848,19 @@ export function App() {
       <main className="max-w-7xl mx-auto px-2 sm:px-4 lg:px-8 py-4 sm:py-8 overflow-x-hidden">
         {activeTab === 'home' && (
           <div className="bg-gray-50 pb-4">
-            <Homepage currentTrip={currentTrip} />
+            <Homepage
+              currentTrip={currentTrip}
+              onUpdateTrip={(updatedTrip?: Trip) => {
+                if (updatedTrip) {
+                  // Instantly update the trips list so UI reflects changes immediately
+                  setTrips(prev =>
+                    prev.map(t => (t.id === updatedTrip.id ? updatedTrip : t))
+                  );
+                } else {
+                  loadTrips();
+                }
+              }}
+            />
           </div>
         )}
         {activeTab === 'schedule' && <TravelSchedule currentTrip={currentTrip} />}
