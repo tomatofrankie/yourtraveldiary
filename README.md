@@ -184,17 +184,6 @@ The app includes **three methods** to share your trip data:
 - ✅ Shopping list items
 - ✅ Travel information (hotels, flights, etc.)
 
-## 🗄️ Cloud Storage with Neon
-
-Currently, the app uses **localStorage** for data persistence. For cloud storage and sync capabilities, see the detailed [Neon Setup Guide](./NEON_SETUP.md).
-
-### Why Neon?
-
-- ☁️ Cloud-based Postgres database
-- 🔄 Multi-device sync
-- 🔒 Secure and reliable
-- 💰 Generous free tier
-- 🚀 Serverless architecture
 
 ## 🛠️ Technology Stack
 
@@ -264,8 +253,6 @@ All data is stored locally in your browser using localStorage:
 - Instant access
 - Privacy-focused
 
-**Want cloud sync?** See the [Neon Setup Guide](./NEON_SETUP.md)
-
 ## 🌐 Browser Compatibility
 
 - ✅ Chrome/Edge (latest)
@@ -308,9 +295,8 @@ MIT License - feel free to use this project for your own trips!
 ## 📧 Support
 
 For issues or questions:
-1. Check the [Neon Setup Guide](./NEON_SETUP.md) for database questions
-2. Review the code comments for implementation details
-3. Open an issue on GitHub
+1. Review the code comments for implementation details
+2. Open an issue on GitHub
 
 ---
 
