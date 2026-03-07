@@ -1,5 +1,5 @@
 import { Trip, ScheduleItem, Expense, ShoppingItem, TravelInfo } from '../types';
-import { db } from './firebase';
+import { auth, db } from './firebase';
 import {
   collection,
   doc,
@@ -34,12 +34,44 @@ function saveToStorage<T>(key: string, data: T[]): void {
   localStorage.setItem(key, JSON.stringify(data));
 }
 
-// --- Firestore write helpers (non-blocking, best-effort) ---
+function clearAllTripDataFromStorage() {
+  saveToStorage(KEYS.TRIPS, []);
+  saveToStorage(KEYS.SCHEDULES, []);
+  saveToStorage(KEYS.EXPENSES, []);
+  saveToStorage(KEYS.SHOPPING, []);
+  saveToStorage(KEYS.TRAVEL_INFO, []);
+  localStorage.removeItem(KEYS.CURRENT_TRIP);
+}
+
+function cleanData<T>(data: T): T {
+  return JSON.parse(JSON.stringify(data));
+}
+
+function getCurrentUserId(): string | null {
+  return auth.currentUser?.uid ?? null;
+}
+
+function ensureTripOwnership(trip: Trip): Trip {
+  const userId = getCurrentUserId();
+  return {
+    ...trip,
+    userId: trip.userId || userId || 'unknown',
+  };
+}
+
+function getTripIdsForCurrentUser(): string[] {
+  const userId = getCurrentUserId();
+  if (!userId) return [];
+  return getFromStorage<Trip>(KEYS.TRIPS)
+    .filter((trip) => trip.userId === userId)
+    .map((trip) => trip.id);
+}
 
 function saveTripToFirestore(trip: Trip) {
   try {
-    const ref = doc(collection(db, 'trips'), trip.id);
-    void setDoc(ref, trip, { merge: true });
+    const safeTrip = ensureTripOwnership(trip);
+    const ref = doc(collection(db, 'trips'), safeTrip.id);
+    void setDoc(ref, cleanData(safeTrip), { merge: true });
   } catch (e) {
     console.error('Failed to save trip to Firestore', e);
   }
@@ -130,18 +162,23 @@ function deleteTravelInfoFromFirestore(id: string) {
 
 // Trip operations
 export const tripStorage = {
-  getAll: (): Trip[] => getFromStorage<Trip>(KEYS.TRIPS),
+  getAll: (): Trip[] => {
+    const userId = getCurrentUserId();
+    const trips = getFromStorage<Trip>(KEYS.TRIPS);
+    return userId ? trips.filter((t) => t.userId === userId) : [];
+  },
 
   save: (trip: Trip): void => {
+    const safeTrip = ensureTripOwnership(trip);
     const trips = getFromStorage<Trip>(KEYS.TRIPS);
-    const index = trips.findIndex((t) => t.id === trip.id);
+    const index = trips.findIndex((t) => t.id === safeTrip.id);
     if (index >= 0) {
-      trips[index] = trip;
+      trips[index] = safeTrip;
     } else {
-      trips.push(trip);
+      trips.push(safeTrip);
     }
     saveToStorage(KEYS.TRIPS, trips);
-    saveTripToFirestore(trip);
+    saveTripToFirestore(safeTrip);
   },
 
   delete: (id: string): void => {
@@ -160,7 +197,10 @@ export const tripStorage = {
 // Schedule operations
 export const scheduleStorage = {
   getAll: (tripId: string): ScheduleItem[] => {
-    return getFromStorage<ScheduleItem>(KEYS.SCHEDULES).filter((s) => s.tripId === tripId);
+    const tripIds = new Set(getTripIdsForCurrentUser());
+    return getFromStorage<ScheduleItem>(KEYS.SCHEDULES).filter(
+      (s) => s.tripId === tripId && tripIds.has(s.tripId)
+    );
   },
 
   save: (item: ScheduleItem): void => {
@@ -185,7 +225,10 @@ export const scheduleStorage = {
 // Expense operations
 export const expenseStorage = {
   getAll: (tripId: string): Expense[] => {
-    return getFromStorage<Expense>(KEYS.EXPENSES).filter((e) => e.tripId === tripId);
+    const tripIds = new Set(getTripIdsForCurrentUser());
+    return getFromStorage<Expense>(KEYS.EXPENSES).filter(
+      (e) => e.tripId === tripId && tripIds.has(e.tripId)
+    );
   },
 
   save: (expense: Expense): void => {
@@ -210,7 +253,10 @@ export const expenseStorage = {
 // Shopping operations
 export const shoppingStorage = {
   getAll: (tripId: string): ShoppingItem[] => {
-    return getFromStorage<ShoppingItem>(KEYS.SHOPPING).filter((s) => s.tripId === tripId);
+    const tripIds = new Set(getTripIdsForCurrentUser());
+    return getFromStorage<ShoppingItem>(KEYS.SHOPPING).filter(
+      (s) => s.tripId === tripId && tripIds.has(s.tripId)
+    );
   },
 
   save: (item: ShoppingItem): void => {
@@ -235,7 +281,10 @@ export const shoppingStorage = {
 // Travel info operations
 export const travelInfoStorage = {
   getAll: (tripId: string): TravelInfo[] => {
-    return getFromStorage<TravelInfo>(KEYS.TRAVEL_INFO).filter((t) => t.tripId === tripId);
+    const tripIds = new Set(getTripIdsForCurrentUser());
+    return getFromStorage<TravelInfo>(KEYS.TRAVEL_INFO).filter(
+      (t) => t.tripId === tripId && tripIds.has(t.tripId)
+    );
   },
 
   save: (info: TravelInfo): void => {
@@ -265,72 +314,76 @@ export const travelInfoStorage = {
  * the same data.
  */
 export async function syncFromFirestore(): Promise<void> {
+  const userId = getCurrentUserId();
+  if (!userId) {
+    clearAllTripDataFromStorage();
+    return;
+  }
+
   try {
-    // Trips
-    const tripsSnap = await getDocs(collection(db, 'trips'));
+    const tripsSnap = await getDocs(query(collection(db, 'trips'), where('userId', '==', userId)));
     const trips: Trip[] = [];
     tripsSnap.forEach((docSnap) => {
       const data = docSnap.data() as Trip;
-      trips.push({ ...data, id: docSnap.id });
+      trips.push({ ...data, id: docSnap.id, userId: data.userId || userId });
     });
     saveToStorage(KEYS.TRIPS, trips);
 
     const tripIds = trips.map((t) => t.id);
-    if (tripIds.length === 0) return;
+    if (tripIds.length === 0) {
+      saveToStorage(KEYS.SCHEDULES, []);
+      saveToStorage(KEYS.EXPENSES, []);
+      saveToStorage(KEYS.SHOPPING, []);
+      saveToStorage(KEYS.TRAVEL_INFO, []);
+      localStorage.removeItem(KEYS.CURRENT_TRIP);
+      return;
+    }
 
-    // Schedules
-    const schedulesSnap = await getDocs(
-      query(collection(db, 'schedules'), where('tripId', 'in', tripIds.slice(0, 10)))
-    );
-    const schedules: ScheduleItem[] = [];
-    schedulesSnap.forEach((docSnap) => {
-      const data = docSnap.data() as ScheduleItem;
-      schedules.push({ ...data, id: docSnap.id });
-    });
-    saveToStorage(KEYS.SCHEDULES, schedules);
+    const allSchedules: ScheduleItem[] = [];
+    const allExpenses: Expense[] = [];
+    const allShopping: ShoppingItem[] = [];
+    const allInfos: TravelInfo[] = [];
 
-    // Expenses
-    const expensesSnap = await getDocs(
-      query(collection(db, 'expenses'), where('tripId', 'in', tripIds.slice(0, 10)))
-    );
-    const expenses: Expense[] = [];
-    expensesSnap.forEach((docSnap) => {
-      const data = docSnap.data() as Expense;
-      expenses.push({ ...data, id: docSnap.id });
-    });
-    saveToStorage(KEYS.EXPENSES, expenses);
+    for (const tripId of tripIds) {
+      const [schedulesSnap, expensesSnap, shoppingSnap, infoSnap] = await Promise.all([
+        getDocs(query(collection(db, 'schedules'), where('tripId', '==', tripId))),
+        getDocs(query(collection(db, 'expenses'), where('tripId', '==', tripId))),
+        getDocs(query(collection(db, 'shoppingItems'), where('tripId', '==', tripId))),
+        getDocs(query(collection(db, 'travelInfo'), where('tripId', '==', tripId))),
+      ]);
 
-    // Shopping items
-    const shoppingSnap = await getDocs(
-      query(collection(db, 'shoppingItems'), where('tripId', 'in', tripIds.slice(0, 10)))
-    );
-    const shopping: ShoppingItem[] = [];
-    shoppingSnap.forEach((docSnap) => {
-      const data = docSnap.data() as ShoppingItem;
-      shopping.push({ ...data, id: docSnap.id });
-    });
-    saveToStorage(KEYS.SHOPPING, shopping);
+      schedulesSnap.forEach((docSnap) => {
+        allSchedules.push({ ...(docSnap.data() as ScheduleItem), id: docSnap.id });
+      });
+      expensesSnap.forEach((docSnap) => {
+        allExpenses.push({ ...(docSnap.data() as Expense), id: docSnap.id });
+      });
+      shoppingSnap.forEach((docSnap) => {
+        allShopping.push({ ...(docSnap.data() as ShoppingItem), id: docSnap.id });
+      });
+      infoSnap.forEach((docSnap) => {
+        allInfos.push({ ...(docSnap.data() as TravelInfo), id: docSnap.id });
+      });
+    }
 
-    // Travel info
-    const infoSnap = await getDocs(
-      query(collection(db, 'travelInfo'), where('tripId', 'in', tripIds.slice(0, 10)))
-    );
-    const infos: TravelInfo[] = [];
-    infoSnap.forEach((docSnap) => {
-      const data = docSnap.data() as TravelInfo;
-      infos.push({ ...data, id: docSnap.id });
-    });
-    saveToStorage(KEYS.TRAVEL_INFO, infos);
+    saveToStorage(KEYS.SCHEDULES, allSchedules);
+    saveToStorage(KEYS.EXPENSES, allExpenses);
+    saveToStorage(KEYS.SHOPPING, allShopping);
+    saveToStorage(KEYS.TRAVEL_INFO, allInfos);
+
+    const currentTripId = localStorage.getItem(KEYS.CURRENT_TRIP);
+    if (currentTripId && !tripIds.includes(currentTripId)) {
+      localStorage.removeItem(KEYS.CURRENT_TRIP);
+    }
   } catch (e) {
     console.error('Failed to sync from Firestore', e);
   }
 }
 
+export function clearUserSessionData(): void {
+  clearAllTripDataFromStorage();
+}
+
 export function generateId(): string {
-  return (
-    Date.now().toString(36) +
-    Math.random()
-      .toString(36)
-      .slice(2)
-  );
+  return Date.now().toString(36) + Math.random().toString(36).slice(2);
 }

@@ -1,5 +1,6 @@
 import { initializeApp, getApps } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
+import { getAuth } from 'firebase/auth';
 
 // Note: for Vite, env vars must be prefixed with VITE_
 // You can set these in Netlify Environment Variables.
@@ -15,6 +16,7 @@ const firebaseConfig = {
 
 export const firebaseApp = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
 export const db = getFirestore(firebaseApp);
+export const auth = getAuth(firebaseApp);
 
 // Analytics is optional and only works in the browser.
 export async function initAnalytics() {

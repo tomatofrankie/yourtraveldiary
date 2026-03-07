@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
+import { onAuthStateChanged } from 'firebase/auth';
 import { Plane, Calendar, DollarSign, ShoppingBag, Info, Plus, ChevronDown, X, Download, Upload, Share2, RefreshCw, LogOut } from 'lucide-react';
 import { Trip, DestinationSegment } from './types';
-import { tripStorage, scheduleStorage, expenseStorage, shoppingStorage, travelInfoStorage, generateId, syncFromFirestore } from './utils/storage';
+import { tripStorage, scheduleStorage, expenseStorage, shoppingStorage, travelInfoStorage, generateId, syncFromFirestore, clearUserSessionData } from './utils/storage';
+import { auth } from './utils/firebase';
 import { Homepage } from './components/Homepage';
 import { TravelSchedule } from './components/TravelSchedule';
 import { TravelExpenses } from './components/TravelExpenses';
@@ -14,6 +16,7 @@ type Tab = 'home' | 'schedule' | 'expenses' | 'shopping' | 'info';
 
 export function App() {
   const [loggedIn, setLoggedIn] = useState<boolean>(isAuthenticated());
+  const [authReady, setAuthReady] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>('home');
   const [trips, setTrips] = useState<Trip[]>([]);
   const [currentTripId, setCurrentTripId] = useState<string | null>(null);
@@ -21,6 +24,7 @@ export function App() {
   const [showTripSelector, setShowTripSelector] = useState(false);
   const [showImportExport, setShowImportExport] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const isSyncingRef = useRef(false);
   const [formData, setFormData] = useState<Partial<Trip>>({
     name: '',
     startDate: '',
@@ -52,50 +56,54 @@ export function App() {
 
   // Auto-sync when app comes back to focus
   useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        // App came back to focus, auto-sync from Firestore
-        void (async () => {
-          setSyncing(true);
-          await syncFromFirestore();
-          loadTrips();
-          setSyncing(false);
-        })();
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (!user) {
+        clearUserSessionData();
+        setTrips([]);
+        setCurrentTripId(null);
+        setLoggedIn(false);
+        setAuthReady(true);
+        return;
       }
-    };
 
-    const handleFocus = () => {
-      // Also sync when window regains focus
-      void (async () => {
-        setSyncing(true);
+      setLoggedIn(true);
+      if (isSyncingRef.current) return;
+      isSyncingRef.current = true;
+      setSyncing(true);
+      try {
         await syncFromFirestore();
         loadTrips();
+        const savedTripId = tripStorage.getCurrent();
+        if (savedTripId) {
+          setCurrentTripId(savedTripId);
+        }
+      } finally {
         setSyncing(false);
-      })();
-    };
+        isSyncingRef.current = false;
+        setAuthReady(true);
+      }
+    });
 
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('focus', handleFocus);
-
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('focus', handleFocus);
-    };
+    return () => unsubscribe();
   }, []);
 
   useEffect(() => {
-    // On startup: load from Firestore, then from localStorage
-    const init = async () => {
-      setSyncing(true);
-      await syncFromFirestore();
-      loadTrips();
-      const savedTripId = tripStorage.getCurrent();
-      if (savedTripId) {
-        setCurrentTripId(savedTripId);
+    const handleVisibilityChange = async () => {
+      if (document.visibilityState === 'visible' && !isSyncingRef.current && auth.currentUser) {
+        isSyncingRef.current = true;
+        setSyncing(true);
+        try {
+          await syncFromFirestore();
+          loadTrips();
+        } finally {
+          setSyncing(false);
+          isSyncingRef.current = false;
+        }
       }
-      setSyncing(false);
     };
-    void init();
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, []);
 
   const loadTrips = () => {
@@ -142,6 +150,7 @@ export function App() {
 
     const newTrip: Trip = {
       id: generateId(),
+      userId: auth.currentUser?.uid || '',
       name: formData.name!,
       startDate: formData.startDate!,
       endDate: formData.endDate!,
@@ -231,46 +240,127 @@ export function App() {
     reader.onload = (e) => {
       try {
         const content = e.target?.result as string;
-        const data = JSON.parse(content);
-        
-        // Handle both old format (flat structure) and new format (nested with trip/schedules/etc)
-        const tripData = data.trip || data;
-        const schedulesData = data.schedules || data.schedulesItems || [];
-        const expensesData = data.expenses || data.expensesItems || [];
-        const shoppingData = data.shoppingItems || data.shopping || [];
-        const travelInfoData = data.travelInfo || data.travelInformation || [];
-        
+        let importData: any;
+
+        // Try to parse as JSON
+        try {
+          importData = JSON.parse(content);
+        } catch {
+          alert('Invalid file format. Please use a JSON file exported from this app.');
+          return;
+        }
+
+        // Handle different export formats
+        let tripData: any = null;
+        let schedulesData: any[] = [];
+        let expensesData: any[] = [];
+        let shoppingData: any[] = [];
+        let travelInfoData: any[] = [];
+
+        if (importData.trip) {
+          // New full export format: { trip, schedules, expenses, shoppingItems, travelInfo }
+          tripData = importData.trip;
+          schedulesData = importData.schedules || [];
+          expensesData = importData.expenses || [];
+          shoppingData = importData.shoppingItems || importData.shopping || [];
+          travelInfoData = importData.travelInfo || [];
+        } else if (importData.id && importData.name) {
+          // Old format: just the trip object itself
+          tripData = importData;
+        } else {
+          alert('Unrecognized file format. Please use a file exported from this app.');
+          return;
+        }
+
         // Generate new ID for imported trip to avoid conflicts
         const newTripId = generateId();
         const importedTrip: Trip = {
-          ...tripData,
           id: newTripId,
+          userId: auth.currentUser?.uid || '',
           name: `${tripData.name} (Imported)`,
+          startDate: tripData.startDate || '',
+          endDate: tripData.endDate || '',
+          destination: tripData.destination || '',
+          destinations: tripData.destinations || [
+            {
+              id: generateId(),
+              name: tripData.destination || '',
+              startDate: tripData.startDate || '',
+              endDate: tripData.endDate || '',
+            }
+          ],
+          themeColor: tripData.themeColor,
         };
 
-        // Save the trip to both localStorage and Firestore
+        // Save the trip (localStorage + Firestore)
         tripStorage.save(importedTrip);
 
-        // Save each item to trigger Firestore sync
-        const saveItemsToFirestore = () => {
-          // Save schedules to Firestore
+        // Save schedules (localStorage + Firestore via scheduleStorage.save)
+        if (Array.isArray(schedulesData)) {
           schedulesData.forEach((item: any) => {
-            scheduleStorage.save({ ...item, id: generateId(), tripId: newTripId });
+            scheduleStorage.save({
+              ...item,
+              id: generateId(),
+              tripId: newTripId,
+              timeFrom: item.timeFrom || item.time || '',
+              timeTo: item.timeTo || '',
+              location: item.location || '',
+              category: item.category || 'other',
+              googleMapsLink: item.googleMapsLink || '',
+              notes: item.notes || '',
+            });
           });
-          // Save expenses to Firestore
+        }
+
+        // Save expenses (localStorage + Firestore via expenseStorage.save)
+        if (Array.isArray(expensesData)) {
           expensesData.forEach((item: any) => {
-            expenseStorage.save({ ...item, id: generateId(), tripId: newTripId });
+            expenseStorage.save({
+              ...item,
+              id: generateId(),
+              tripId: newTripId,
+              item: item.item || '',
+              currency: item.currency || 'HKD',
+              price: Number(item.price) || 0,
+              category: item.category || 'other',
+              whoPaid: item.whoPaid || '',
+            });
           });
-          // Save shopping items to Firestore
+        }
+
+        // Save shopping items (localStorage + Firestore via shoppingStorage.save)
+        if (Array.isArray(shoppingData)) {
           shoppingData.forEach((item: any) => {
-            shoppingStorage.save({ ...item, id: generateId(), tripId: newTripId });
+            shoppingStorage.save({
+              ...item,
+              id: generateId(),
+              tripId: newTripId,
+              name: item.name || '',
+              category: item.category || '',
+              link: item.link || item.imageUrl || '',
+              purchased: item.purchased || false,
+            });
           });
-          // Save travel info to Firestore
+        }
+
+        // Save travel info (localStorage + Firestore via travelInfoStorage.save)
+        if (Array.isArray(travelInfoData)) {
           travelInfoData.forEach((item: any) => {
-            travelInfoStorage.save({ ...item, id: generateId(), tripId: newTripId });
+            travelInfoStorage.save({
+              ...item,
+              id: generateId(),
+              tripId: newTripId,
+              type: item.type || 'hotel',
+              name: item.name || '',
+              confirmationNumber: item.confirmationNumber || '',
+              date: item.date || '',
+              time: item.time || '',
+              address: item.address || '',
+              phone: item.phone || '',
+              notes: item.notes || '',
+            });
           });
-        };
-        saveItemsToFirestore();
+        }
 
         // Set as current trip and reload
         tripStorage.setCurrent(newTripId);
@@ -367,6 +457,7 @@ export function App() {
       const newTripId = generateId();
       const importedTrip: Trip = {
         id: newTripId,
+        userId: auth.currentUser?.uid || '',
         name: `${tripData.name} (Imported)`,
         startDate: tripData.startDate || '',
         endDate: tripData.endDate || '',
@@ -460,10 +551,16 @@ export function App() {
   };
 
   const handleSync = async () => {
+    if (isSyncingRef.current) return;
+    isSyncingRef.current = true;
     setSyncing(true);
-    await syncFromFirestore();
-    loadTrips();
-    setSyncing(false);
+    try {
+      await syncFromFirestore();
+      loadTrips();
+    } finally {
+      setSyncing(false);
+      isSyncingRef.current = false;
+    }
   };
 
   const tabs = [
@@ -474,12 +571,26 @@ export function App() {
     { id: 'info' as Tab, label: 'Info', icon: Info },
   ];
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     if (confirm('Are you sure you want to logout?')) {
-      logout();
+      clearUserSessionData();
+      await logout();
       setLoggedIn(false);
     }
   };
+
+  if (!authReady) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-purple-100 flex items-center justify-center p-4">
+        <div className="text-center">
+          <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-purple-300 to-purple-500 rounded-2xl shadow-lg mb-4">
+            <Plane className="w-8 h-8 text-white animate-pulse" />
+          </div>
+          <p className="text-sm text-gray-500">Loading your diary...</p>
+        </div>
+      </div>
+    );
+  }
 
   // Show login page if not authenticated
   if (!loggedIn) {
@@ -497,7 +608,7 @@ export function App() {
               <div className="w-8 h-8 sm:w-10 sm:h-10 bg-gradient-to-br from-purple-300 to-purple-500 rounded-lg flex items-center justify-center">
                 <Plane className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
               </div>
-              <h1 className="text-lg sm:text-xl font-bold text-gray-900 hidden sm:block">Our Travel Diary</h1>
+              <h1 className="text-lg sm:text-xl font-bold text-gray-900 hidden sm:block">Your Travel Diary</h1>
             </div>
 
             {/* Actions */}
@@ -844,7 +955,7 @@ export function App() {
         </div>
       )}
 
-      {/* Main Content */}
+              {/* Main Content */}
       <main className="max-w-7xl mx-auto px-2 sm:px-4 lg:px-8 py-4 sm:py-8 overflow-x-hidden">
         {activeTab === 'home' && (
           <div className="bg-gray-50 pb-4">

@@ -6,6 +6,8 @@ A comprehensive iPhone-friendly travel planning app that helps you organize ever
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.9.3-blue)
 ![Tailwind](https://img.shields.io/badge/Tailwind-4.1.17-blue)
 
+Try on <https://your-simple-travel-diary.netlify.app>
+
 ## 🌟 Features
 
 ### 📱 Five Main Sections
@@ -100,7 +102,7 @@ The built app will be in the `dist` folder.
 
 ## 📤 Sharing & Backup
 
-This app includes powerful **Import/Export** features to share trips with others or create backups. See the detailed [Import/Export Guide](./IMPORT_EXPORT_GUIDE.md) for:
+This app includes powerful **Import/Export** features to share trips with others or create backups.
 
 - 📥 How to export trips as JSON files
 - 📤 How to import trips from others

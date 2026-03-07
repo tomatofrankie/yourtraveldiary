@@ -1,65 +1,103 @@
-import { useState, useEffect } from 'react';
-import { Plane, Eye, EyeOff, Lock } from 'lucide-react';
-
-// The app password — change this to your desired password
-const APP_PASSWORD = "0000";
-
-const AUTH_KEY = 'tripplanner_auth';
-const REMEMBER_KEY = 'tripplanner_remember';
+import { useState } from 'react';
+import { Plane, Eye, EyeOff, Lock, Mail, UserPlus, LogIn } from 'lucide-react';
+import {
+  browserLocalPersistence,
+  browserSessionPersistence,
+  setPersistence,
+} from 'firebase/auth';
+import { auth } from '../utils/firebase';
+import { createAccountWithIdentifier, signInWithIdentifier } from '../utils/authHelpers';
 
 interface LoginPageProps {
   onLogin: () => void;
 }
 
 export function isAuthenticated(): boolean {
-  // Check session (sessionStorage) or remembered (localStorage)
-  const sessionAuth = sessionStorage.getItem(AUTH_KEY);
-  const rememberedAuth = localStorage.getItem(AUTH_KEY);
-  return sessionAuth === 'true' || rememberedAuth === 'true';
+  return !!auth.currentUser;
 }
 
-export function logout(): void {
-  sessionStorage.removeItem(AUTH_KEY);
-  localStorage.removeItem(AUTH_KEY);
-  localStorage.removeItem(REMEMBER_KEY);
+export async function logout(): Promise<void> {
+  await auth.signOut();
 }
 
 export function LoginPage({ onLogin }: LoginPageProps) {
+  const [mode, setMode] = useState<'login' | 'signup'>('login');
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
-  const [rememberMe, setRememberMe] = useState(false);
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [rememberMe, setRememberMe] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
   const [shaking, setShaking] = useState(false);
 
-  useEffect(() => {
-    // Check if "remember me" was previously set
-    const remembered = localStorage.getItem(REMEMBER_KEY);
-    if (remembered === 'true') {
-      setRememberMe(true);
-    }
-  }, []);
+  const triggerError = (message: string) => {
+    setError(message);
+    setShaking(true);
+    setTimeout(() => setShaking(false), 500);
+  };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const getFirebaseErrorMessage = (code: string) => {
+    switch (code) {
+      case 'auth/email-already-in-use':
+        return 'This email is already registered.';
+      case 'auth/username-already-in-use':
+        return 'This username is already taken.';
+      case 'auth/invalid-username':
+        return 'Please enter a valid username (3-20 letters, numbers, dot, underscore, or hyphen).';
+      case 'auth/invalid-email':
+        return 'Please enter a valid email address.';
+      case 'auth/weak-password':
+        return 'Password is too short. Firebase requires at least 6 characters.';
+      case 'auth/invalid-credential':
+      case 'auth/user-not-found':
+      case 'auth/wrong-password':
+        return 'Incorrect email/username or password.';
+      case 'auth/too-many-requests':
+        return 'Too many attempts. Please try again later.';
+      case 'auth/network-request-failed':
+        return 'Network error. Please check your internet connection and try again.';
+      case 'auth/operation-not-allowed':
+      case 'auth/configuration-not-found':
+        return 'Email/Password sign-in is not enabled in Firebase. Please go to Firebase Console → Authentication → Sign-in method → enable Email/Password.';
+      default:
+        return code ? `Signup failed: ${code}` : 'Something went wrong. Please try again.';
+    }
+  };
+
+  const applyPersistence = async () => {
+    await setPersistence(
+      auth,
+      rememberMe ? browserLocalPersistence : browserSessionPersistence
+    );
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setLoading(true);
 
-    if (password === APP_PASSWORD) {
-      // Save auth state
-      sessionStorage.setItem(AUTH_KEY, 'true');
+    try {
+      await applyPersistence();
 
-      if (rememberMe) {
-        localStorage.setItem(AUTH_KEY, 'true');
-        localStorage.setItem(REMEMBER_KEY, 'true');
+      if (mode === 'signup') {
+        if (password !== confirmPassword) {
+          triggerError('Passwords do not match.');
+          setLoading(false);
+          return;
+        }
+        await createAccountWithIdentifier(identifier.trim(), password);
       } else {
-        localStorage.removeItem(AUTH_KEY);
-        localStorage.removeItem(REMEMBER_KEY);
+        await signInWithIdentifier(identifier.trim(), password);
       }
 
       onLogin();
-    } else {
-      setError('Incorrect password. Please try again.');
-      setShaking(true);
-      setTimeout(() => setShaking(false), 500);
+    } catch (err: any) {
+      console.error('Firebase auth error:', err);
+      triggerError(getFirebaseErrorMessage(err?.code || ''));
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -80,12 +118,40 @@ export function LoginPage({ onLogin }: LoginPageProps) {
             <Plane className="w-10 h-10 text-white" />
           </div>
           <h1 className="text-2xl font-bold text-gray-900">Our Travel Diary</h1>
-          <p className="text-sm text-gray-500 mt-1">Enter password to continue &#40;0000&#41;</p>
+          <p className="text-sm text-gray-500 mt-1">
+            {mode === 'login' ? 'Sign in with your email or username' : 'Create an account with email or username'}
+          </p>
         </div>
 
         {/* Login Form */}
         <form onSubmit={handleSubmit} className="bg-white rounded-2xl shadow-xl p-6 space-y-5 border border-purple-100">
-          {/* Password Field */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              <Mail className="w-4 h-4 inline mr-1" />
+              Email or Username
+            </label>
+            <input
+              type="text"
+              value={identifier}
+              onChange={(e) => {
+                setIdentifier(e.target.value);
+                setError('');
+              }}
+              placeholder="Enter your email or username (test)"
+              className={`w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-purple-400 focus:border-transparent transition-colors ${
+                error ? 'border-red-300 bg-red-50' : 'border-gray-300'
+              }`}
+              autoFocus
+              autoComplete={mode === 'login' ? 'username' : 'username'}
+              required
+            />
+            {mode === 'signup' && (
+              <p className="mt-2 text-xs text-gray-500">
+                You can sign up with either a real email address or a unique username.
+              </p>
+            )}
+          </div>
+
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               <Lock className="w-4 h-4 inline mr-1" />
@@ -99,12 +165,12 @@ export function LoginPage({ onLogin }: LoginPageProps) {
                   setPassword(e.target.value);
                   setError('');
                 }}
-                placeholder="Enter your password"
+                placeholder={mode === 'login' ? 'Enter your password (test123)' : 'Create a password'}
                 className={`w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-purple-400 focus:border-transparent transition-colors pr-12 ${
                   error ? 'border-red-300 bg-red-50' : 'border-gray-300'
                 }`}
-                autoFocus
-                autoComplete="current-password"
+                autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+                required
               />
               <button
                 type="button"
@@ -114,14 +180,45 @@ export function LoginPage({ onLogin }: LoginPageProps) {
                 {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
               </button>
             </div>
-
-            {/* Error Message */}
-            {error && (
-              <p className="mt-2 text-sm text-red-600 flex items-center gap-1">
-                <span>⚠️</span> {error}
-              </p>
-            )}
           </div>
+
+          {mode === 'signup' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <Lock className="w-4 h-4 inline mr-1" />
+                Confirm Password
+              </label>
+              <div className="relative">
+                <input
+                  type={showConfirmPassword ? 'text' : 'password'}
+                  value={confirmPassword}
+                  onChange={(e) => {
+                    setConfirmPassword(e.target.value);
+                    setError('');
+                  }}
+                  placeholder="Confirm your password"
+                  className={`w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-purple-400 focus:border-transparent transition-colors pr-12 ${
+                    error ? 'border-red-300 bg-red-50' : 'border-gray-300'
+                  }`}
+                  autoComplete="new-password"
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  {showConfirmPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {error && (
+            <p className="text-sm text-red-600 flex items-center gap-1">
+              <span>⚠️</span> {error}
+            </p>
+          )}
 
           {/* Remember Me */}
           <div className="flex items-center gap-2">
@@ -140,9 +237,25 @@ export function LoginPage({ onLogin }: LoginPageProps) {
           {/* Login Button */}
           <button
             type="submit"
-            className="w-full py-3 bg-gradient-to-r from-purple-400 to-purple-500 text-white font-semibold rounded-xl hover:from-purple-500 hover:to-purple-600 transition-all shadow-md hover:shadow-lg active:scale-[0.98]"
+            disabled={loading}
+            className="w-full py-3 bg-gradient-to-r from-purple-400 to-purple-500 text-white font-semibold rounded-xl hover:from-purple-500 hover:to-purple-600 transition-all shadow-md hover:shadow-lg active:scale-[0.98] disabled:opacity-60"
           >
-            Enter Diary
+            {loading ? 'Please wait...' : mode === 'login' ? 'Sign In' : 'Create Account'}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setMode(mode === 'login' ? 'signup' : 'login');
+              setError('');
+              setIdentifier('');
+              setPassword('');
+              setConfirmPassword('');
+            }}
+            className="w-full flex items-center justify-center gap-2 py-2 text-sm text-purple-600 hover:text-purple-700"
+          >
+            {mode === 'login' ? <UserPlus className="w-4 h-4" /> : <LogIn className="w-4 h-4" />}
+            {mode === 'login' ? 'Create new account' : 'Back to sign in'}
           </button>
         </form>
 

@@ -7,6 +7,7 @@ export interface DestinationSegment {
 
 export interface Trip {
   id: string;
+  userId: string;
   name: string;
   startDate: string;
   endDate: string;
