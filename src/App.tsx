@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
-import { Plane, Calendar, DollarSign, ShoppingBag, Info, Plus, ChevronDown, X, Download, Upload, Share2, RefreshCw, LogOut } from 'lucide-react';
+import { Plane, Calendar, DollarSign, ShoppingBag, Info, Plus, ChevronDown, X, Download, Upload, Share2, RefreshCw, LogOut, FileSpreadsheet } from 'lucide-react';
 import { Trip, DestinationSegment } from './types';
 import { tripStorage, scheduleStorage, expenseStorage, shoppingStorage, travelInfoStorage, generateId, syncFromFirestore, clearUserSessionData } from './utils/storage';
 import { auth } from './utils/firebase';
@@ -22,6 +22,7 @@ export function App() {
   const [currentTripId, setCurrentTripId] = useState<string | null>(null);
   const [showTripForm, setShowTripForm] = useState(false);
   const [showTripSelector, setShowTripSelector] = useState(false);
+  const [showPastTrips, setShowPastTrips] = useState(false);
   const [showImportExport, setShowImportExport] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const isSyncingRef = useRef(false);
@@ -180,6 +181,7 @@ export function App() {
     setCurrentTripId(tripId);
     tripStorage.setCurrent(tripId);
     setShowTripSelector(false);
+    setShowPastTrips(false);
   };
 
   const deleteTrip = (tripId: string) => {
@@ -193,6 +195,13 @@ export function App() {
   };
 
   const currentTrip = trips.find(t => t.id === currentTripId) || null;
+
+  // Show trips in chronological order (earliest start date first)
+  const sortedTrips = [...trips].sort((a, b) => {
+    const aDate = a.startDate || '9999-12-31';
+    const bDate = b.startDate || '9999-12-31';
+    return aDate.localeCompare(bDate);
+  });
 
   // Export current trip data
   const handleExportTrip = () => {
@@ -415,6 +424,84 @@ export function App() {
       console.error('Failed to copy:', error);
       alert('Failed to copy to clipboard. Please use the Export button instead.');
     }
+  };
+
+  // Export to CSV (Excel-friendly)
+  const handleExportCSV = () => {
+    if (!currentTrip) {
+      alert('Please select a trip to export');
+      return;
+    }
+
+    // Helper to escape CSV fields
+    const escapeCSV = (value: any): string => {
+      if (value === null || value === undefined) return '';
+      const str = String(value);
+      if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    };
+
+    // Helper to format date nicely
+    const formatDate = (dateStr: string): string => {
+      if (!dateStr) return '';
+      try {
+        const date = new Date(dateStr);
+        return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+      } catch {
+        return dateStr;
+      }
+    };
+
+    // Get schedule data only
+    const schedules = localStorage.getItem('tripplanner_schedules')
+      ? JSON.parse(localStorage.getItem('tripplanner_schedules') || '[]').filter((s: any) => s.tripId === currentTripId)
+      : [];
+
+    let csv = '';
+    
+    // BOM for UTF-8 (helps Excel recognize encoding)
+    csv += '\uFEFF';
+
+    // Trip Info Section
+    csv += 'TRIP INFORMATION\n';
+    csv += 'Name,Destinations,Start Date,End Date\n';
+    const destinations = currentTrip.destinations && currentTrip.destinations.length > 0
+      ? currentTrip.destinations.map(d => d.name).join(' → ')
+      : currentTrip.destination;
+    csv += `${escapeCSV(currentTrip.name)},${escapeCSV(destinations)},${escapeCSV(formatDate(currentTrip.startDate))},${escapeCSV(formatDate(currentTrip.endDate))}\n`;
+    csv += '\n';
+
+    // Schedule Section
+    csv += 'SCHEDULE\n';
+    csv += 'Date,From Time,To Time,Location,Google Maps Link,Notes\n';
+    if (schedules.length > 0) {
+      // Sort by date and time
+      const sortedSchedules = [...schedules].sort((a: any, b: any) => {
+        const dateCompare = (a.date || '').localeCompare(b.date || '');
+        if (dateCompare !== 0) return dateCompare;
+        return (a.timeFrom || '').localeCompare(b.timeFrom || '');
+      });
+      sortedSchedules.forEach((item: any) => {
+        csv += `${escapeCSV(formatDate(item.date))},${escapeCSV(item.timeFrom)},${escapeCSV(item.timeTo || '')},${escapeCSV(item.location)},${escapeCSV(item.googleMapsLink || '')},${escapeCSV(item.notes || '')}\n`;
+      });
+    } else {
+      csv += 'No schedule items\n';
+    }
+
+    // Create and download the CSV file
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${currentTrip.name.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    
+    setShowImportExport(false);
   };
 
   // Paste from clipboard import
@@ -658,6 +745,18 @@ export function App() {
                     </div>
                     <div className="p-2 space-y-2">
                       <button
+                        onClick={handleExportCSV}
+                        disabled={!currentTrip}
+                        className="w-full flex items-center gap-3 px-3 py-2 text-left rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <FileSpreadsheet className="w-5 h-5 text-emerald-600" />
+                        <div>
+                          <div className="text-sm font-medium text-gray-900">Export to Excel</div>
+                          <div className="text-xs text-gray-500">Download as CSV file</div>
+                        </div>
+                      </button>
+
+                      <button
                         onClick={handleExportTrip}
                         disabled={!currentTrip}
                         className="w-full flex items-center gap-3 px-3 py-2 text-left rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -732,50 +831,69 @@ export function App() {
                   <ChevronDown className="w-3 h-3 sm:w-4 sm:h-4 text-purple-500 flex-shrink-0" />
                 </button>
 
-                {showTripSelector && (
-                  <div className="absolute right-0 mt-2 w-64 bg-white rounded-lg shadow-lg border border-gray-200 py-2 z-50">
-                    <div className="px-3 py-2 border-b border-gray-200">
-                      <p className="text-xs font-medium text-gray-500 uppercase">Your Trips</p>
-                    </div>
-                    <div className="max-h-64 overflow-y-auto">
-                      {trips.map(trip => (
-                        <div
-                          key={trip.id}
-                          className="flex items-center justify-between px-3 py-2 hover:bg-gray-50"
-                        >
-                          <button
-                            onClick={() => selectTrip(trip.id)}
-                            className={`flex-1 text-left ${
-                              currentTripId === trip.id ? 'text-purple-600 font-medium' : 'text-gray-700'
-                            }`}
-                          >
-                            <div className="text-sm font-medium break-words whitespace-normal">{trip.name}</div>
-                            <div className="text-xs text-gray-500 break-words whitespace-normal leading-snug">
-                              {trip.destinations && trip.destinations.length > 0
-                                ? trip.destinations
-                                    .slice()
-                                    .sort((a, b) => a.startDate.localeCompare(b.startDate))
-                                    .map(d => d.name)
-                                    .join(' → ')
-                                : trip.destination}
-                            </div>
-                          </button>
-                          <button
-                            onClick={() => deleteTrip(trip.id)}
-                            className="p-1 text-gray-400 hover:text-red-600 flex-shrink-0"
-                          >
-                            <X className="w-4 h-4" />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                    {trips.length === 0 && (
-                      <div className="px-3 py-4 text-center text-sm text-gray-500">
-                        No trips yet
+                {showTripSelector && (() => {
+                  const today = new Date().toISOString().split('T')[0];
+                  const upcomingTrips = sortedTrips.filter(t => t.startDate >= today);
+                  const pastTripsList = sortedTrips.filter(t => t.startDate < today);
+                  const tripsToShow = showPastTrips ? pastTripsList : upcomingTrips;
+                  
+                  return (
+                    <div className="absolute right-0 mt-2 w-64 bg-white rounded-lg shadow-lg border border-gray-200 py-2 z-50">
+                      <div className="px-3 py-2 border-b border-gray-200">
+                        <p className="text-xs font-medium text-gray-500 uppercase">
+                          {showPastTrips ? 'Past Trips' : 'Upcoming Trips'}
+                        </p>
                       </div>
-                    )}
-                  </div>
-                )}
+                       <div className="max-h-64 overflow-y-auto">
+                         {tripsToShow.map(trip => (
+                           <div
+                             key={trip.id}
+                             className="flex items-center justify-between px-3 py-2 hover:bg-gray-50"
+                           >
+                             <button
+                               onClick={() => selectTrip(trip.id)}
+                               className={`flex-1 text-left ${
+                                 currentTripId === trip.id ? 'text-purple-600 font-medium' : 'text-gray-700'
+                               }`}
+                             >
+                               <div className="text-sm font-medium break-words whitespace-normal">{trip.name}</div>
+                               <div className="text-xs text-gray-500 break-words whitespace-normal leading-snug">
+                                 {trip.destinations && trip.destinations.length > 0
+                                   ? trip.destinations
+                                       .slice()
+                                       .sort((a, b) => a.startDate.localeCompare(b.startDate))
+                                       .map(d => d.name)
+                                       .join(' → ')
+                                   : trip.destination}
+                               </div>
+                             </button>
+                             <button
+                               onClick={() => deleteTrip(trip.id)}
+                               className="p-1 text-gray-400 hover:text-red-600 flex-shrink-0"
+                             >
+                               <X className="w-4 h-4" />
+                             </button>
+                           </div>
+                         ))}
+                       </div>
+                       {tripsToShow.length === 0 && (
+                         <div className="px-3 py-4 text-center text-sm text-gray-500">
+                           {showPastTrips ? 'No past trips' : 'No upcoming trips'}
+                         </div>
+                       )}
+                       <div className="px-3 py-2 border-t border-gray-200">
+                         <button
+                           onClick={() => setShowPastTrips(!showPastTrips)}
+                           className="w-full text-left text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-200 font-medium border border-gray-300 rounded px-3 py-1.5"
+                         >
+                           {showPastTrips 
+                             ? `← Back to Upcoming (${upcomingTrips.length})`
+                             : `Show Past Trips (${pastTripsList.length})`}
+                         </button>
+                       </div>
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* New Trip Button */}
