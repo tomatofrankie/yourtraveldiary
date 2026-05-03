@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Share, Plus, X } from 'lucide-react';
+import { useTranslation } from '../utils/i18n';
 
 export default function InstallPrompt() {
+  const { t } = useTranslation();
   const [isIOS, setIsIOS] = useState(false);
   const [showPrompt, setShowPrompt] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
@@ -84,8 +86,8 @@ export default function InstallPrompt() {
             </svg>
           </div>
           <div>
-            <h3 className="font-semibold text-gray-900">Install App</h3>
-            <p className="text-sm text-gray-500 leading-tight mt-0.5">Add to home screen for fullscreen & offline access!</p>
+            <h3 className="font-semibold text-gray-900">{t('Install App')}</h3>
+            <p className="text-sm text-gray-500 leading-tight mt-0.5">{t('Add to home screen for fullscreen & offline access!')}</p>
           </div>
         </div>
 
@@ -93,15 +95,15 @@ export default function InstallPrompt() {
           <div className="bg-purple-50 rounded-xl p-3.5 text-sm text-purple-900 flex flex-col gap-2.5 mt-1">
             <div className="flex items-center gap-2">
               <span className="font-medium">1.</span>
-              <span>Tap the</span>
+              <span>{t('Tap the')}</span>
               <span className="bg-white p-1 rounded shadow-sm"><Share size={16} className="text-blue-500" /></span>
-              <span>button below.</span>
+              <span>{t('button below.')}</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="font-medium">2.</span>
-              <span>Scroll and tap</span>
+              <span>{t('Scroll and tap')}</span>
               <span className="font-semibold flex items-center gap-1 bg-white px-1.5 py-0.5 rounded shadow-sm">
-                <Plus size={14} /> Add to Home Screen
+                <Plus size={14} /> {t('Add to Home Screen')}
               </span>
             </div>
           </div>
@@ -110,11 +112,11 @@ export default function InstallPrompt() {
             onClick={handleInstallClick}
             className="w-full bg-purple-500 text-white font-medium py-2.5 rounded-xl mt-1 hover:bg-purple-600 transition-colors active:bg-purple-700"
           >
-            Install Now
+            {t('Install Now')}
           </button>
         ) : (
           <div className="bg-purple-50 rounded-xl p-3 text-sm text-purple-900 mt-1">
-            Tap the browser menu (⋮) and select <strong>Install app</strong> or <strong>Add to Home screen</strong>.
+            {t('Tap the browser menu (⋮) and select')} <strong>{t('Install app')}</strong> {t('or')} <strong>{t('Add to Home screen')}</strong>.
           </div>
         )}
       </div>

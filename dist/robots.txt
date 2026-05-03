@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://yourtraveldiary.netlify.app/sitemap.xml

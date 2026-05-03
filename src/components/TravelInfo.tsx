@@ -1,8 +1,12 @@
 import { useState, useEffect } from 'react';
 import { Plus, Edit2, Trash2, Info, X } from 'lucide-react';
+import { format, parseISO } from 'date-fns';
 import { Trip, TravelInfo as TravelInfoType } from '../types';
 import { travelInfoStorage, generateId } from '../utils/storage';
 import { getCategoryColor } from '../utils/colors';
+import { useCalendarNavigation } from '../utils/calendarNavigation';
+import { CalendarPicker } from './CalendarPicker';
+import { useTranslation } from '../utils/i18n';
 
 interface TravelInfoProps {
   currentTrip: Trip | null;
@@ -11,6 +15,7 @@ interface TravelInfoProps {
 const INFO_TYPES = ['hotel', 'flight', 'car-rental', 'restaurant'] as const;
 
 export function TravelInfo({ currentTrip }: TravelInfoProps) {
+  const { t } = useTranslation();
   const [infos, setInfos] = useState<TravelInfoType[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -24,6 +29,9 @@ export function TravelInfo({ currentTrip }: TravelInfoProps) {
     phone: '',
     notes: '',
   });
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
+  const [calendarMonth, setCalendarMonth] = useState<{ year: number; month: number }>({ year: new Date().getFullYear(), month: new Date().getMonth() });
+  const { goToPreviousMonth, goToNextMonth, showLeftArrow, showRightArrow, dragOffset, dragDirection, isSnappingBack, calendarNavigationProps } = useCalendarNavigation(setCalendarMonth);
 
   useEffect(() => {
     if (currentTrip) {
@@ -36,6 +44,48 @@ export function TravelInfo({ currentTrip }: TravelInfoProps) {
       const data = travelInfoStorage.getAll(currentTrip.id);
       setInfos(data);
     }
+  };
+
+  const getDaysInMonth = (year: number, month: number) => {
+    return new Date(year, month + 1, 0).getDate();
+  };
+
+  const isDateInRange = (year: number, month: number, day: number, startDate: string, endDate: string): boolean => {
+    if (!startDate || !endDate) return true;
+    const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    return dateStr >= startDate && dateStr <= endDate;
+  };
+
+  const getCalendarDays = () => {
+    const firstDay = new Date(calendarMonth.year, calendarMonth.month, 1).getDay();
+    const daysInMonth = getDaysInMonth(calendarMonth.year, calendarMonth.month);
+    
+    const days = [];
+    for (let i = 0; i < firstDay; i++) {
+      days.push(null);
+    }
+    for (let i = 1; i <= daysInMonth; i++) {
+      days.push(i);
+    }
+    return days;
+  };
+
+  const openDatePicker = () => {
+    // Navigate to the date's month if one is selected, otherwise to trip start month
+    if (formData.date) {
+      const date = parseISO(formData.date);
+      setCalendarMonth({ year: date.getFullYear(), month: date.getMonth() });
+    } else if (currentTrip?.startDate) {
+      const date = parseISO(currentTrip.startDate);
+      setCalendarMonth({ year: date.getFullYear(), month: date.getMonth() });
+    }
+    setDatePickerOpen(true);
+  };
+
+  const handleDateSelect = (selectedDate: string) => {
+    setFormData({ ...formData, date: selectedDate });
+    setDatePickerOpen(false);
+    setCalendarMonth({ year: new Date().getFullYear(), month: new Date().getMonth() });
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -93,8 +143,8 @@ export function TravelInfo({ currentTrip }: TravelInfoProps) {
       <div className="flex items-center justify-center h-full">
         <div className="text-center">
           <Info className="w-16 h-16 mx-auto text-gray-400 mb-4" />
-          <h2 className="text-xl font-semibold text-gray-700 mb-2">No Trip Selected</h2>
-          <p className="text-gray-500">Create a new trip to add travel information</p>
+          <h2 className="text-xl font-semibold text-gray-700 mb-2">{t('No Trip Selected')}</h2>
+          <p className="text-gray-500">{t('Create a new trip to add travel information')}</p>
         </div>
       </div>
     );
@@ -111,23 +161,23 @@ export function TravelInfo({ currentTrip }: TravelInfoProps) {
   return (
     <div className="space-y-6 max-w-full overflow-x-hidden">
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold text-gray-900">Travel Information</h2>
+        <h2 className="text-2xl font-bold text-gray-900">{t('Travel Information')}</h2>
         <button
           onClick={() => setShowForm(true)}
           className="flex items-center gap-2 px-4 py-2 bg-purple-400 text-white rounded-lg hover:bg-purple-500 transition-colors"
         >
           <Plus className="w-5 h-5" />
-          <span className="hidden sm:inline">Add Info</span>
+          <span className="hidden sm:inline">{t('Add Info')}</span>
         </button>
       </div>
 
       {/* Form Modal */}
       {showForm && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-gray-400/30 flex items-center justify-center z-50 p-4" onClick={resetForm}>
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between p-4 border-b border-gray-200">
               <h3 className="text-lg font-semibold">
-                {editingId ? 'Edit Information' : 'Add Information'}
+                {editingId ? t('Edit Information') : t('Add Information')}
               </h3>
               <button onClick={resetForm} className="text-gray-400 hover:text-gray-600">
                 <X className="w-5 h-5" />
@@ -136,7 +186,7 @@ export function TravelInfo({ currentTrip }: TravelInfoProps) {
             
             <form onSubmit={handleSubmit} className="p-4 space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('Type')}</label>
                 <select
                   value={formData.type}
                   onChange={(e) => setFormData({ ...formData, type: e.target.value as TravelInfoType['type'] })}
@@ -149,41 +199,42 @@ export function TravelInfo({ currentTrip }: TravelInfoProps) {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('Name')}</label>
                 <input
                   type="text"
                   required
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-400 focus:border-transparent"
-                  placeholder="Hotel/Flight/Restaurant name"
+                  placeholder={t('Hotel/Flight/Restaurant name')}
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Confirmation Number</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('Confirmation Number')}</label>
                 <input
                   type="text"
                   value={formData.confirmationNumber}
                   onChange={(e) => setFormData({ ...formData, confirmationNumber: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-400 focus:border-transparent"
-                  placeholder="Booking/confirmation number"
+                  placeholder={t('Booking/confirmation number')}
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Date</label>
-                  <input
-                    type="date"
-                    value={formData.date}
-                    onChange={(e) => setFormData({ ...formData, date: e.target.value })}
-                    className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-400 focus:border-transparent ${formData.date ? 'text-gray-900' : 'text-gray-300'}`}
-                  />
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('Date')}</label>
+                  <button
+                    type="button"
+                    onClick={openDatePicker}
+                    className={`w-full px-3 py-2 border border-gray-300 rounded-lg text-left transition-colors hover:bg-gray-50 focus:ring-2 focus:ring-purple-400 focus:border-transparent ${formData.date ? 'text-gray-900 font-medium' : 'text-gray-400'}`}
+                  >
+                    {formData.date ? format(parseISO(formData.date), 'MMM dd, yyyy') : 'Select date...'}
+                  </button>
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Time</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('Time')}</label>
                   <input
                     type="time"
                     value={formData.time}
@@ -194,35 +245,35 @@ export function TravelInfo({ currentTrip }: TravelInfoProps) {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Address</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('Address')}</label>
                 <input
                   type="text"
                   value={formData.address}
                   onChange={(e) => setFormData({ ...formData, address: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-400 focus:border-transparent"
-                  placeholder="Full address"
+                  placeholder={t('Full address')}
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('Phone')}</label>
                 <input
                   type="tel"
                   value={formData.phone}
                   onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-400 focus:border-transparent"
-                  placeholder="Contact number"
+                  placeholder={t('Contact number')}
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('Notes')}</label>
                 <textarea
                   value={formData.notes}
                   onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
                   rows={3}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-400 focus:border-transparent"
-                  placeholder="Additional information..."
+                  placeholder={t('Additional information...')}
                 />
               </div>
 
@@ -231,17 +282,52 @@ export function TravelInfo({ currentTrip }: TravelInfoProps) {
                   type="submit"
                   className="flex-1 px-4 py-2 bg-purple-400 text-white rounded-lg hover:bg-purple-500 transition-colors"
                 >
-                  {editingId ? 'Update' : 'Add'}
+                  {editingId ? t('Update') : t('Add')}
                 </button>
                 <button
                   type="button"
                   onClick={resetForm}
                   className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
                 >
-                  Cancel
+                  {t('Cancel')}
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Date Picker Modal */}
+      {datePickerOpen && (
+        <div className="fixed inset-0 bg-gray-400/30 flex items-center justify-center z-50 p-4" onClick={() => { setDatePickerOpen(false); setCalendarMonth({ year: new Date().getFullYear(), month: new Date().getMonth() }); }}>
+          <div className="bg-white rounded-lg shadow-xl p-6 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
+            <CalendarPicker
+              calendarMonth={calendarMonth}
+              selectedDate={formData.date || undefined}
+              minDate={currentTrip?.startDate}
+              maxDate={currentTrip?.endDate}
+              dragOffset={dragOffset}
+              dragDirection={dragDirection}
+              isSnappingBack={isSnappingBack}
+              showLeftArrow={showLeftArrow}
+              showRightArrow={showRightArrow}
+              onPreviousMonth={goToPreviousMonth}
+              onNextMonth={goToNextMonth}
+              onSelectDate={handleDateSelect}
+              calendarNavigationProps={calendarNavigationProps}
+              header={<div className="mb-4"><h3 className="text-lg font-semibold text-gray-900">{t('Select Date')}</h3></div>}
+              footer={
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { setDatePickerOpen(false); setCalendarMonth({ year: new Date().getFullYear(), month: new Date().getMonth() }); }}
+                    className="flex-1 px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
+                  >
+                    {t('Close')}
+                  </button>
+                </div>
+              }
+            />
           </div>
         </div>
       )}
@@ -250,7 +336,7 @@ export function TravelInfo({ currentTrip }: TravelInfoProps) {
       <div className="space-y-6">
         {Object.entries(groupedByType).length === 0 ? (
           <div className="text-center py-12 bg-white rounded-lg border border-gray-200">
-            <p className="text-gray-500">No travel information added yet</p>
+            <p className="text-gray-500">{t('No travel information added yet')}</p>
           </div>
         ) : (
           INFO_TYPES.filter(type => groupedByType[type]).map(type => (

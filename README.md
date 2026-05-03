@@ -6,8 +6,6 @@ A comprehensive iPhone-friendly travel planning app that helps you organize ever
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.9.3-blue)
 ![Tailwind](https://img.shields.io/badge/Tailwind-4.1.17-blue)
 
-Try on <https://your-simple-travel-diary.netlify.app>
-
 ## 🌟 Features
 
 ### 📱 Five Main Sections
@@ -102,7 +100,7 @@ The built app will be in the `dist` folder.
 
 ## 📤 Sharing & Backup
 
-This app includes powerful **Import/Export** features to share trips with others or create backups.
+This app includes powerful **Import/Export** features to share trips with others or create backups. See the detailed [Import/Export Guide](./IMPORT_EXPORT_GUIDE.md) for:
 
 - 📥 How to export trips as JSON files
 - 📤 How to import trips from others
@@ -184,6 +182,17 @@ The app includes **three methods** to share your trip data:
 - ✅ Shopping list items
 - ✅ Travel information (hotels, flights, etc.)
 
+## 🗄️ Cloud Storage with Neon
+
+Currently, the app uses **localStorage** for data persistence. For cloud storage and sync capabilities, see the detailed [Neon Setup Guide](./NEON_SETUP.md).
+
+### Why Neon?
+
+- ☁️ Cloud-based Postgres database
+- 🔄 Multi-device sync
+- 🔒 Secure and reliable
+- 💰 Generous free tier
+- 🚀 Serverless architecture
 
 ## 🛠️ Technology Stack
 
@@ -253,6 +262,8 @@ All data is stored locally in your browser using localStorage:
 - Instant access
 - Privacy-focused
 
+**Want cloud sync?** See the [Neon Setup Guide](./NEON_SETUP.md)
+
 ## 🌐 Browser Compatibility
 
 - ✅ Chrome/Edge (latest)
@@ -295,8 +306,9 @@ MIT License - feel free to use this project for your own trips!
 ## 📧 Support
 
 For issues or questions:
-1. Review the code comments for implementation details
-2. Open an issue on GitHub
+1. Check the [Neon Setup Guide](./NEON_SETUP.md) for database questions
+2. Review the code comments for implementation details
+3. Open an issue on GitHub
 
 ---
 

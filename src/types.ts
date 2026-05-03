@@ -11,9 +11,12 @@ export interface Trip {
   name: string;
   startDate: string;
   endDate: string;
-  destination: string; // Keep for backward compatibility (primary destination)
-  destinations: DestinationSegment[]; // New field for multiple destinations
+  destination: string;
+  destinations: DestinationSegment[];
   themeColor?: string;
+  coverPhoto?: string;
+  favorite?: boolean;
+  sharedWith?: string[]; // UIDs granted full edit/delete access
 }
 
 export interface ScheduleItem {
@@ -37,6 +40,8 @@ export interface Expense {
   price: number;
   category: 'food' | 'shopping' | 'hotel' | 'transportation' | 'attraction' | 'other';
   whoPaid?: string;
+  settled?: boolean;
+  splitWith?: 'all' | 'solo' | string[]; // 'all' = all travellers, 'solo' = no split, string[] = specific names
 }
 
 export interface ShoppingItem {

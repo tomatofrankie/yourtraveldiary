@@ -63,7 +63,7 @@ function getTripIdsForCurrentUser(): string[] {
   const userId = getCurrentUserId();
   if (!userId) return [];
   return getFromStorage<Trip>(KEYS.TRIPS)
-    .filter((trip) => trip.userId === userId)
+    .filter((trip) => trip.userId === userId || trip.sharedWith?.includes(userId))
     .map((trip) => trip.id);
 }
 
@@ -165,7 +165,9 @@ export const tripStorage = {
   getAll: (): Trip[] => {
     const userId = getCurrentUserId();
     const trips = getFromStorage<Trip>(KEYS.TRIPS);
-    return userId ? trips.filter((t) => t.userId === userId) : [];
+    return userId
+      ? trips.filter((t) => t.userId === userId || t.sharedWith?.includes(userId))
+      : [];
   },
 
   save: (trip: Trip): void => {
@@ -321,12 +323,23 @@ export async function syncFromFirestore(): Promise<void> {
   }
 
   try {
-    const tripsSnap = await getDocs(query(collection(db, 'trips'), where('userId', '==', userId)));
+    // Fetch trips owned by user
+    const ownedSnap = await getDocs(query(collection(db, 'trips'), where('userId', '==', userId)));
     const trips: Trip[] = [];
-    tripsSnap.forEach((docSnap) => {
+    ownedSnap.forEach((docSnap) => {
       const data = docSnap.data() as Trip;
       trips.push({ ...data, id: docSnap.id, userId: data.userId || userId });
     });
+
+    // Fetch trips shared with user
+    const sharedSnap = await getDocs(query(collection(db, 'trips'), where('sharedWith', 'array-contains', userId)));
+    sharedSnap.forEach((docSnap) => {
+      const data = docSnap.data() as Trip;
+      if (!trips.find(t => t.id === docSnap.id)) {
+        trips.push({ ...data, id: docSnap.id });
+      }
+    });
+
     saveToStorage(KEYS.TRIPS, trips);
 
     const tripIds = trips.map((t) => t.id);

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:netlify": "netlify dev",
     "build": "vite build",
     "preview": "vite preview"
   },
@@ -16,6 +17,7 @@
     "firebase": "^12.8.0",
     "html2pdf.js": "^0.14.0",
     "lucide-react": "^0.563.0",
+    "netlify": "^25.6.0",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "tailwind-merge": "3.4.0"

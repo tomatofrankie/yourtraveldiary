@@ -3,12 +3,14 @@ import { Plus, Edit2, Trash2, ShoppingBag, X, Check, Link as LinkIcon } from 'lu
 import { Trip, ShoppingItem } from '../types';
 import { shoppingStorage, generateId } from '../utils/storage';
 import { getCategoryColor } from '../utils/colors';
+import { useTranslation } from '../utils/i18n';
 
 interface ShoppingListProps {
   currentTrip: Trip | null;
 }
 
 export function ShoppingList({ currentTrip }: ShoppingListProps) {
+  const { t } = useTranslation();
   const [items, setItems] = useState<ShoppingItem[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -85,8 +87,8 @@ export function ShoppingList({ currentTrip }: ShoppingListProps) {
       <div className="flex items-center justify-center h-full">
         <div className="text-center">
           <ShoppingBag className="w-16 h-16 mx-auto text-gray-400 mb-4" />
-          <h2 className="text-xl font-semibold text-gray-700 mb-2">No Trip Selected</h2>
-          <p className="text-gray-500">Create a new trip to add shopping items</p>
+          <h2 className="text-xl font-semibold text-gray-700 mb-2">{t('No Trip Selected')}</h2>
+          <p className="text-gray-500">{t('Create a new trip to add shopping items')}</p>
         </div>
       </div>
     );
@@ -106,9 +108,9 @@ export function ShoppingList({ currentTrip }: ShoppingListProps) {
     <div className="space-y-6 max-w-full overflow-x-hidden">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
-          <h2 className="text-xl sm:text-2xl font-bold text-gray-900">Shopping List</h2>
+          <h2 className="text-xl sm:text-2xl font-bold text-gray-900">{t('Shopping List')}</h2>
           <p className="text-sm text-gray-600 mt-1">
-            {purchasedCount} of {items.length} items purchased
+            {purchasedCount} {t('of')} {items.length} {t('items purchased')}
           </p>
         </div>
         <button
@@ -116,18 +118,18 @@ export function ShoppingList({ currentTrip }: ShoppingListProps) {
           className="flex items-center gap-2 px-4 py-2 bg-purple-400 text-white rounded-lg hover:bg-purple-500 transition-colors"
         >
           <Plus className="w-5 h-5" />
-          <span className="hidden sm:inline">Add Item</span>
-          <span className="sm:hidden">Add</span>
+          <span className="hidden sm:inline">{t('Add Item')}</span>
+          <span className="sm:hidden">{t('Add')}</span>
         </button>
       </div>
 
       {/* Form Modal */}
       {showForm && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-gray-400/30 flex items-center justify-center z-50 p-4" onClick={resetForm}>
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between p-4 border-b border-gray-200">
               <h3 className="text-lg font-semibold">
-                {editingId ? 'Edit Item' : 'Add Item'}
+                {editingId ? t('Edit Item') : t('Add Item')}
               </h3>
               <button onClick={resetForm} className="text-gray-400 hover:text-gray-600">
                 <X className="w-5 h-5" />
@@ -136,7 +138,7 @@ export function ShoppingList({ currentTrip }: ShoppingListProps) {
             
             <form onSubmit={handleSubmit} className="p-4 space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Item Name</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('Item Name')}</label>
                 <input
                   type="text"
                   required
@@ -148,7 +150,7 @@ export function ShoppingList({ currentTrip }: ShoppingListProps) {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('Category')}</label>
                 <input
                   type="text"
                   required
@@ -160,7 +162,7 @@ export function ShoppingList({ currentTrip }: ShoppingListProps) {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Link (optional)</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('Link (optional)')}</label>
                 <input
                   type="url"
                   value={formData.link || ''}
@@ -175,14 +177,14 @@ export function ShoppingList({ currentTrip }: ShoppingListProps) {
                   type="submit"
                   className="flex-1 px-4 py-2 bg-purple-400 text-white rounded-lg hover:bg-purple-500 transition-colors"
                 >
-                  {editingId ? 'Update' : 'Add'}
+                  {editingId ? t('Update') : t('Add')}
                 </button>
                 <button
                   type="button"
                   onClick={resetForm}
                   className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
                 >
-                  Cancel
+                  {t('Cancel')}
                 </button>
               </div>
             </form>
@@ -194,7 +196,7 @@ export function ShoppingList({ currentTrip }: ShoppingListProps) {
       <div className="space-y-6">
         {Object.entries(groupedByCategory).length === 0 ? (
           <div className="text-center py-12 bg-white rounded-lg border border-gray-200">
-            <p className="text-gray-500">No shopping items added yet</p>
+            <p className="text-gray-500">{t('No shopping items added yet')}</p>
           </div>
         ) : (
           Object.entries(groupedByCategory)
@@ -238,7 +240,7 @@ export function ShoppingList({ currentTrip }: ShoppingListProps) {
                           }`}
                         >
                           <Check className="w-3 h-3 sm:w-4 sm:h-4" />
-                          <span className="hidden sm:inline">{item.purchased ? 'Purchased' : 'Mark'}</span>
+                          <span className="hidden sm:inline">{item.purchased ? t('Purchased') : t('Mark')}</span>
                         </button>
                         <button
                           onClick={() => handleEdit(item)}

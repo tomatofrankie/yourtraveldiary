@@ -117,7 +117,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
           <div className="inline-flex items-center justify-center w-20 h-20 bg-gradient-to-br from-purple-300 to-purple-500 rounded-2xl shadow-lg mb-4">
             <Plane className="w-10 h-10 text-white" />
           </div>
-          <h1 className="text-2xl font-bold text-gray-900">Our Travel Diary</h1>
+          <h1 className="text-2xl font-bold text-gray-900">Your Travel Diary</h1>
           <p className="text-sm text-gray-500 mt-1">
             {mode === 'login' ? 'Sign in with your email or username' : 'Create an account with email or username'}
           </p>
