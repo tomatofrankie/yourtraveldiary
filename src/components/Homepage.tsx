@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
-import { Calendar, MapPin, CloudSun, ChevronDown, ChevronRight, Edit2, X, Plus, Trash2, Grid3x3, List, Users } from 'lucide-react';
+import { useEffect, useState, useRef } from 'react';
+import { Calendar, MapPin, CloudSun, ChevronDown, ChevronRight, Edit2, X, Plus, Trash2, Grid3x3, List, Users, Star } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { Trip, ScheduleItem, WeatherData, DestinationSegment } from '../types';
 import { scheduleStorage, tripStorage, generateId } from '../utils/storage';
+import { auth } from '../utils/firebase';
 import { getWeatherForDate } from '../utils/weather';
 import { getCategoryColor } from '../utils/colors';
 import { useCalendarNavigation } from '../utils/calendarNavigation';
@@ -38,7 +39,7 @@ export function Homepage({ currentTrip, onUpdateTrip, onShareTrip }: HomepagePro
   const [calendarMonth, setCalendarMonth] = useState<{ year: number; month: number }>({ year: new Date().getFullYear(), month: new Date().getMonth() });
   const { goToPreviousMonth, goToNextMonth, showLeftArrow, showRightArrow, dragOffset, dragDirection, isSnappingBack, calendarNavigationProps } = useCalendarNavigation(setCalendarMonth);
   const [hoveredDate, setHoveredDate] = useState<string | null>(null);
-  const [addScheduleModal, setAddScheduleModal] = useState<{ open: boolean; date: string; category: 'hotel' | 'transportation' | null }>({ open: false, date: '', category: null });
+  const [addScheduleModal, setAddScheduleModal] = useState<{ open: boolean; date: string; category: 'hotel' | 'transportation' | 'food' | 'shopping' | 'attraction' | 'other' | null }>({ open: false, date: '', category: null });
   const [scheduleFormData, setScheduleFormData] = useState<Partial<ScheduleItem>>({
     date: '',
     timeFrom: '',
@@ -48,6 +49,8 @@ export function Homepage({ currentTrip, onUpdateTrip, onShareTrip }: HomepagePro
     googleMapsLink: '',
   });
   const [addMenuOpen, setAddMenuOpen] = useState<string | null>(null);
+  const [menuPosition, setMenuPosition] = useState<{ top: number; left: number } | null>(null);
+  const addMenuButtonRef = useRef<{ [key: string]: HTMLButtonElement | null }>({});
   const [hoveredScheduleId, setHoveredScheduleId] = useState<string | null>(null);
   const [menuCloseTimeout, setMenuCloseTimeout] = useState<NodeJS.Timeout | null>(null);
   const [editingScheduleId, setEditingScheduleId] = useState<string | null>(null);
@@ -67,6 +70,32 @@ export function Homepage({ currentTrip, onUpdateTrip, onShareTrip }: HomepagePro
   const [draggedScheduleId, setDraggedScheduleId] = useState<string | null>(null);
   const [dragOverDate, setDragOverDate] = useState<string | null>(null);
   const [touchDraggedScheduleId, setTouchDraggedScheduleId] = useState<string | null>(null);
+  const [calendarCategoryFilter, setCalendarCategoryFilter] = useState<string[]>(() => {
+    const saved = localStorage.getItem('calendarCategoryFilter');
+    return saved ? JSON.parse(saved) : ['transportation', 'hotel'];
+  });
+
+  // Save filter to localStorage when it changes
+  useEffect(() => {
+    localStorage.setItem('calendarCategoryFilter', JSON.stringify(calendarCategoryFilter));
+  }, [calendarCategoryFilter]);
+
+  const CATEGORIES = [
+    { id: 'transportation', label: t('Transportation'), color: 'bg-orange-100 border-orange-300 text-orange-900' },
+    { id: 'hotel', label: t('Hotel'), color: 'bg-blue-100 border-blue-300 text-blue-900' },
+    { id: 'food', label: t('Food'), color: 'bg-green-100 border-green-300 text-green-900' },
+    { id: 'shopping', label: t('Shopping'), color: 'bg-pink-100 border-pink-300 text-pink-900' },
+    { id: 'attraction', label: t('Attraction'), color: 'bg-purple-100 border-purple-300 text-purple-900' },
+    { id: 'other', label: t('Other'), color: 'bg-gray-100 border-gray-300 text-gray-900' },
+  ];
+
+  const toggleCategoryFilter = (categoryId: string) => {
+    setCalendarCategoryFilter(prev => 
+      prev.includes(categoryId) 
+        ? prev.filter(c => c !== categoryId)
+        : [...prev, categoryId]
+    );
+  };
   const [touchDragPosition, setTouchDragPosition] = useState<{ x: number; y: number } | null>(null);
   const [touchDraggedSchedule, setTouchDraggedSchedule] = useState<ScheduleItem | null>(null);
 
@@ -126,9 +155,9 @@ export function Homepage({ currentTrip, onUpdateTrip, onShareTrip }: HomepagePro
       .sort((a, b) => a.timeFrom.localeCompare(b.timeFrom));
   };
 
-  const getTransportAndHotelByDate = (date: string) => {
+  const getSchedulesByCategoryFilter = (date: string) => {
     return getSchedulesByDate(date).filter(
-      s => s.category === 'transportation' || s.category === 'hotel'
+      s => calendarCategoryFilter.includes(s.category)
     );
   };
 
@@ -358,7 +387,7 @@ export function Homepage({ currentTrip, onUpdateTrip, onShareTrip }: HomepagePro
     return days;
   };
 
-  const openAddScheduleModal = (date: string, category: 'hotel' | 'transportation') => {
+  const openAddScheduleModal = (date: string, category: 'hotel' | 'transportation' | 'food' | 'shopping' | 'attraction' | 'other') => {
     setAddScheduleModal({ open: true, date, category });
     setScheduleFormData({
       date,
@@ -608,6 +637,22 @@ export function Homepage({ currentTrip, onUpdateTrip, onShareTrip }: HomepagePro
             
             {/* Action buttons */}
             <div className="absolute top-0 right-0 flex items-center gap-1">
+              <button
+                onClick={() => {
+                  const userId = auth.currentUser?.uid;
+                  if (!userId) return;
+                  const favorites = currentTrip.favorite || {};
+                  const newFavorites = { ...favorites, [userId]: !favorites[userId] };
+                  const updatedTrip: Trip = { ...currentTrip, favorite: newFavorites };
+                  tripStorage.save(updatedTrip);
+                  if (onUpdateTrip) onUpdateTrip(updatedTrip);
+                }}
+                className={`p-2 rounded-full hover:bg-white/30 active:bg-white/40 transition-all shadow-lg ${themeConfig.text} hover:text-white flex items-center justify-center bg-white/10`}
+                aria-label={currentTrip.favorite?.[auth.currentUser?.uid || ''] ? 'Remove from favorites' : 'Add to favorites'}
+                title={currentTrip.favorite?.[auth.currentUser?.uid || ''] ? 'Remove from favorites' : 'Add to favorites'}
+              >
+                <Star className={`w-6 h-6 ${currentTrip.favorite?.[auth.currentUser?.uid || ''] ? 'fill-yellow-400 text-yellow-400' : ''}`} />
+              </button>
               {onShareTrip && (
                 <button
                   onClick={() => onShareTrip(currentTrip)}
@@ -763,9 +808,28 @@ export function Homepage({ currentTrip, onUpdateTrip, onShareTrip }: HomepagePro
 
       {/* Calendar View */}
       {viewMode === 'calendar' && (
-        <div className="space-y-6">
+        <div className="space-y-4 overflow-visible">
+          {/* Category Filter */}
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-3">
+            <div className="text-xs font-medium text-gray-600 mb-2">{t('Show categories')}:</div>
+            <div className="flex flex-wrap gap-2">
+              {CATEGORIES.map(cat => (
+                <button
+                  key={cat.id}
+                  onClick={() => toggleCategoryFilter(cat.id)}
+                  className={`px-2 py-1 rounded-md text-xs font-medium border transition-colors ${
+                    calendarCategoryFilter.includes(cat.id)
+                      ? cat.color + ' border-2'
+                      : 'bg-gray-50 border border-gray-200 text-gray-400'
+                  }`}
+                >
+                  {calendarCategoryFilter.includes(cat.id) ? '✓ ' : ''}{cat.label}
+                </button>
+              ))}
+            </div>
+          </div>
           {getWeeksInRange(currentTrip.startDate, currentTrip.endDate).map((week, weekIndex) => (
-            <div key={weekIndex} className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+            <div key={weekIndex} className="bg-white rounded-lg shadow-sm border border-gray-200">
               <div className="grid grid-cols-1 md:grid-cols-7 gap-0">
                 {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((dayName) => (
                   <div key={dayName} className="border-b border-gray-200 hidden md:block">
@@ -789,7 +853,7 @@ export function Homepage({ currentTrip, onUpdateTrip, onShareTrip }: HomepagePro
                     );
                   }
                   
-                  const items = getTransportAndHotelByDate(date);
+                  const items = getSchedulesByCategoryFilter(date);
                   const destination = getDestinationForDate(date);
                   
                   return (
@@ -808,7 +872,7 @@ export function Homepage({ currentTrip, onUpdateTrip, onShareTrip }: HomepagePro
                         setDragOverDate(null);
                       }}
                       onTouchEnd={handleTouchEnd}
-                      className={`border-r border-gray-200 last:border-r-0 border-b md:border-b-0 min-h-32 md:min-h-40 p-2 md:p-1 text-xs relative group ${
+                      className={`border-r border-gray-200 last:border-r-0 border-b md:border-b-0 min-h-32 md:min-h-40 p-2 md:p-1 text-xs relative group overflow-visible ${
                         isToday ? 'bg-purple-50' : dayIndex % 2 === 0 ? 'bg-white' : 'bg-gray-50'
                       } ${(dragOverDate === date && draggedScheduleId) || (touchDraggedScheduleId && true) ? 'bg-purple-100 ring-2 ring-purple-400' : ''}`}
                     >
@@ -839,36 +903,25 @@ export function Homepage({ currentTrip, onUpdateTrip, onShareTrip }: HomepagePro
                             onMouseLeave={closeMenuWithDelay}
                           >
                             <button
-                              onClick={() => openMenu(addMenuOpen === date ? '' : date)}
+                              ref={(el) => { addMenuButtonRef.current[date] = el; }}
+                              onClick={() => {
+                                if (addMenuOpen === date) {
+                                  setAddMenuOpen(null);
+                                } else {
+                                  setAddMenuOpen(date);
+                                  // Get button position
+                                  const btn = addMenuButtonRef.current[date];
+                                  if (btn) {
+                                    const rect = btn.getBoundingClientRect();
+                                    setMenuPosition({ top: rect.bottom + 8, left: rect.left + rect.width / 2 });
+                                  }
+                                }
+                              }}
                               className="bg-purple-400 text-white rounded-full p-1 hover:bg-purple-500 transition-colors shadow-md w-6 h-6 flex items-center justify-center text-sm font-bold"
                               title="Add schedule"
                             >
                               +
                             </button>
-                            
-                            {/* Dropdown menu */}
-                            {addMenuOpen === date && (
-                              <div className="absolute top-8 right-0 bg-white border border-gray-300 rounded-lg shadow-lg z-10 transition-opacity duration-200">
-                                <button
-                                  onClick={() => {
-                                    openAddScheduleModal(date, 'hotel');
-                                    setAddMenuOpen(null);
-                                  }}
-                                  className="block w-full text-left px-4 py-2 hover:bg-blue-50 text-sm text-gray-700 border-b border-gray-200 rounded-t-lg transition-colors"
-                                >
-                                  {t('Hotel')}
-                                </button>
-                                <button
-                                  onClick={() => {
-                                    openAddScheduleModal(date, 'transportation');
-                                    setAddMenuOpen(null);
-                                  }}
-                                  className="block w-full text-left px-4 py-2 hover:bg-orange-50 text-sm text-gray-700 rounded-b-lg transition-colors"
-                                >
-                                  {t('Transportation')}
-                                </button>
-                              </div>
-                            )}
                           </div>
                         </div>
                       )}
@@ -887,21 +940,45 @@ export function Homepage({ currentTrip, onUpdateTrip, onShareTrip }: HomepagePro
                             className={`rounded px-1.5 py-1 border relative group cursor-move select-none ${
                               item.category === 'hotel' 
                                 ? 'bg-blue-100 border-blue-300' 
-                                : 'bg-orange-100 border-orange-300'
+                                : item.category === 'transportation'
+                                  ? 'bg-orange-100 border-orange-300'
+                                  : item.category === 'food'
+                                    ? 'bg-green-100 border-green-300'
+                                    : item.category === 'shopping'
+                                      ? 'bg-pink-100 border-pink-300'
+                                      : item.category === 'attraction'
+                                        ? 'bg-purple-100 border-purple-300'
+                                        : 'bg-gray-100 border-gray-300'
                             } ${draggedScheduleId === item.id || touchDraggedScheduleId === item.id ? 'opacity-50' : ''}`}
                             style={{ touchAction: 'none' }}
                           >
                             <div className={`font-medium text-xs md:truncate pr-4 ${
                               item.category === 'hotel' 
                                 ? 'text-blue-900' 
-                                : 'text-orange-900'
+                                : item.category === 'transportation'
+                                  ? 'text-orange-900'
+                                  : item.category === 'food'
+                                    ? 'text-green-900'
+                                    : item.category === 'shopping'
+                                      ? 'text-pink-900'
+                                      : item.category === 'attraction'
+                                        ? 'text-purple-900'
+                                        : 'text-gray-900'
                             }`}>
                               {item.location}
                             </div>
                             <div className={`text-xs ${
                               item.category === 'hotel' 
                                 ? 'text-blue-700' 
-                                : 'text-orange-700'
+                                : item.category === 'transportation'
+                                  ? 'text-orange-700'
+                                  : item.category === 'food'
+                                    ? 'text-green-700'
+                                    : item.category === 'shopping'
+                                      ? 'text-pink-700'
+                                      : item.category === 'attraction'
+                                        ? 'text-purple-700'
+                                        : 'text-gray-700'
                             }`}>
                               {getTimeWithAMPM(item.timeFrom)}
                             </div>
@@ -1095,17 +1172,6 @@ export function Homepage({ currentTrip, onUpdateTrip, onShareTrip }: HomepagePro
                 </div>
               </div>
 
-              <div className="flex items-center gap-3">
-                <input
-                  type="checkbox"
-                  id="favorite"
-                  checked={editForm.favorite || false}
-                  onChange={(e) => setEditForm({ ...editForm, favorite: e.target.checked })}
-                  className="w-4 h-4 text-purple-500 rounded focus:ring-purple-400"
-                />
-                <label htmlFor="favorite" className="text-sm font-medium text-gray-700">{t('⭐ Mark as Favourite')}</label>
-              </div>
-
               {/* Date Range Picker Modal */}
               {datePickerOpen && datePickerContext && (
                 <div className="fixed inset-0 bg-gray-400/30 flex items-center justify-center z-50 p-4" onClick={() => { setDatePickerOpen(false); setDatePickerContext(null); setSelectedStartDate(null); setCalendarMonth({ year: new Date().getFullYear(), month: new Date().getMonth() }); }}>
@@ -1183,7 +1249,7 @@ export function Homepage({ currentTrip, onUpdateTrip, onShareTrip }: HomepagePro
           <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between p-4 border-b border-gray-200">
               <h3 className="text-lg font-semibold">
-                {t('Add')} {addScheduleModal.category === 'hotel' ? t('Hotel') : t('Transportation')}
+                {t('Add')} {addScheduleModal.category ? CATEGORIES.find(c => c.id === addScheduleModal.category)?.label || addScheduleModal.category : ''}
               </h3>
               <button 
                 onClick={() => setAddScheduleModal({ open: false, date: '', category: null })} 
@@ -1425,6 +1491,55 @@ export function Homepage({ currentTrip, onUpdateTrip, onShareTrip }: HomepagePro
           }`}>
             {getTimeWithAMPM(touchDraggedSchedule.timeFrom)}
           </div>
+        </div>
+      )}
+
+      {/* Global Dropdown - rendered at root level */}
+      {addMenuOpen && menuPosition && (
+        <div 
+          className="fixed bg-white border border-gray-300 rounded-lg shadow-lg z-[9999] min-w-32 w-fit max-w-40"
+          style={{ 
+            top: menuPosition.top, 
+            left: menuPosition.left, 
+            transform: 'translateX(-50%)' 
+          }}
+          onMouseEnter={() => {
+            if (menuCloseTimeout) {
+              clearTimeout(menuCloseTimeout);
+              setMenuCloseTimeout(null);
+            }
+          }}
+          onMouseLeave={() => {
+            closeMenuWithDelay();
+          }}
+        >
+          {CATEGORIES.map((cat, idx) => {
+            const hoverBg: Record<string, string> = {
+              transportation: 'hover:bg-orange-50',
+              hotel: 'hover:bg-blue-50',
+              food: 'hover:bg-green-50',
+              shopping: 'hover:bg-pink-50',
+              attraction: 'hover:bg-purple-50',
+              other: 'hover:bg-gray-50',
+            };
+            return (
+              <button
+                key={cat.id}
+                onClick={() => {
+                  openAddScheduleModal(addMenuOpen, cat.id as 'hotel' | 'transportation' | 'food' | 'shopping' | 'attraction' | 'other');
+                  setAddMenuOpen(null);
+                }}
+                className={`block w-full text-left px-4 py-2 text-sm text-gray-700 transition-colors ${
+                  idx === 0 ? 'rounded-t-lg' : idx === CATEGORIES.length - 1 ? 'rounded-b-lg' : ''
+                } ${hoverBg[cat.id] || 'hover:bg-gray-50'}`}
+                style={{
+                  borderBottom: idx < CATEGORIES.length - 1 ? '1px solid #e5e7eb' : 'none'
+                }}
+              >
+                {cat.label}
+              </button>
+            );
+          })}
         </div>
       )}
     </div>

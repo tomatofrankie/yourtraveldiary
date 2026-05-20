@@ -1,8 +1,11 @@
 import { useState, useRef } from 'react';
-import { MapPin, Calendar, Plus, Globe, Navigation, Camera } from 'lucide-react';
+import { MapPin, Calendar, Plus, Globe, Navigation, Camera, Users } from 'lucide-react';
 import { format, parseISO, subMonths, addMonths } from 'date-fns';
 import { Trip } from '../types';
 import { useTranslation } from '../utils/i18n';
+import { auth } from '../utils/firebase';
+import { doc, updateDoc } from 'firebase/firestore';
+import { db } from '../utils/firebase';
 
 interface LandingPageProps {
   trips: Trip[];
@@ -12,7 +15,7 @@ interface LandingPageProps {
   onOpenTrip: (id: string) => void;
 }
 
-type Filter = 'recent' | 'past' | 'favorites';
+type Filter = 'recent' | 'past' | 'favorites' | 'shared';
 
 const HERO_IMAGE = 'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=1400&q=80';
 
@@ -29,9 +32,11 @@ export function LandingPage({ trips, currentTripId, onSelectTrip, onNewTrip, onO
     .filter(t => {
       const start = t.startDate ? new Date(t.startDate) : null;
       const end = t.endDate ? new Date(t.endDate) : null;
+      const currentUserId = auth.currentUser?.uid;
       if (filter === 'recent') return start && start >= sixMonthsAgo && start <= sixMonthsAhead;
       if (filter === 'past') return end && end < now;
-      if (filter === 'favorites') return t.favorite === true;
+      if (filter === 'favorites') return t.favorite?.[currentUserId || ''] === true;
+      if (filter === 'shared') return t.sharedWith?.includes(currentUserId || '');
       return true;
     })
     .sort((a, b) => (b.startDate || '').localeCompare(a.startDate || ''));
@@ -97,7 +102,7 @@ export function LandingPage({ trips, currentTripId, onSelectTrip, onNewTrip, onO
       <div ref={dashboardRef} className="px-0 pt-8 pb-4">
         <div className="flex items-center justify-between mb-5">
           <div className="flex items-center gap-1 bg-white border border-gray-200 rounded-xl p-1">
-            {(['recent', 'past', 'favorites'] as Filter[]).map(f => (
+            {(['recent', 'past', 'favorites', 'shared'] as Filter[]).map(f => (
               <button
                 key={f}
                 onClick={() => setFilter(f)}
@@ -105,7 +110,7 @@ export function LandingPage({ trips, currentTripId, onSelectTrip, onNewTrip, onO
                   filter === f ? 'bg-purple-500 text-white' : 'text-gray-500 hover:text-gray-800'
                 }`}
               >
-                {f === 'recent' ? t('Recent') : f === 'past' ? t('Past') : t('Favorites')}
+                {f === 'recent' ? t('Recent') : f === 'past' ? t('Past') : f === 'favorites' ? t('Favorites') : t('Shared')}
               </button>
             ))}
           </div>
@@ -131,8 +136,13 @@ export function LandingPage({ trips, currentTripId, onSelectTrip, onNewTrip, onO
                     ? <img src={trip.coverPhoto} alt={trip.name} className="absolute inset-0 w-full h-full object-cover" onError={(e) => (e.currentTarget.style.display = 'none')} />
                     : <MapPin className="w-10 h-10 text-white/40" />
                   }
-                  {trip.favorite && (
+                  {trip.favorite?.[auth.currentUser?.uid || ''] && (
                     <span className="absolute top-3 left-3 text-yellow-400 text-lg drop-shadow">★</span>
+                  )}
+                  {trip.sharedWith?.includes(auth.currentUser?.uid || '') && (
+                    <span className="absolute top-3 right-3 text-white/80 text-lg drop-shadow" title="Shared with you">
+                      <Users className="w-5 h-5" />
+                    </span>
                   )}
                 </div>
                 <div className="p-4">
@@ -169,7 +179,7 @@ export function LandingPage({ trips, currentTripId, onSelectTrip, onNewTrip, onO
 
         {filteredTrips.length === 0 && (
           <p className="text-center text-sm text-gray-400 py-8">
-            {filter === 'favorites' ? t('No favourite trips yet.') : t('No trips found for this period.')}
+            {filter === 'favorites' ? t('No favourite trips yet.') : filter === 'shared' ? t('No shared trips yet.') : t('No trips found for this period.')}
           </p>
         )}
       </div>

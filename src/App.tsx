@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
-import { Plane, Calendar, DollarSign, ShoppingBag, Info, Plus, ChevronDown, X, Download, Upload, Share2, RefreshCw, LogOut, FileSpreadsheet, Users, Menu, Settings, Globe } from 'lucide-react';
+import { Plane, Calendar, DollarSign, ShoppingBag, Info, Plus, ChevronDown, X, Download, Upload, Share2, RefreshCw, LogOut, FileSpreadsheet, Users, Menu, Settings, Globe, Lock, Eye, EyeOff } from 'lucide-react';
 import { CalendarPicker } from './components/CalendarPicker';
-import { Trip, DestinationSegment } from './types';
+import { Trip, DestinationSegment, ScheduleItem, Expense, TravelInfo as TravelInfoType } from './types';
 import { tripStorage, scheduleStorage, expenseStorage, shoppingStorage, travelInfoStorage, generateId, syncFromFirestore, clearUserSessionData } from './utils/storage';
-import { auth } from './utils/firebase';
+import { auth, db } from './utils/firebase';
 import { Homepage } from './components/Homepage';
 import { LandingPage } from './components/LandingPage';
 import { TravelSchedule } from './components/TravelSchedule';
@@ -15,6 +15,7 @@ import { LoginPage, isAuthenticated, logout } from './components/LoginPage';
 import { TripSharingModal } from './components/TripSharingModal';
 import InstallPrompt from './components/InstallPrompt';
 import { AiAgent } from './components/AiAgent';
+import { ChangePasswordModal } from './components/ChangePasswordModal';
 import { useCalendarNavigation } from './utils/calendarNavigation';
 import { useTranslation } from './utils/i18n';
 
@@ -122,6 +123,8 @@ export function App() {
   const [showImportExport, setShowImportExport] = useState(false);
   const [showSettingsDropdown, setShowSettingsDropdown] = useState(false);
   const [showLangPicker, setShowLangPicker] = useState(false);
+  const [showChangePassword, setShowChangePassword] = useState(false);
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [selectedLanguage, setSelectedLanguage] = useState(() => {
     const userPicked = localStorage.getItem('userPickedLanguage');
     const deviceLang = navigator.language || 'en';
@@ -137,7 +140,10 @@ export function App() {
     return lang;
   });
   const [syncing, setSyncing] = useState(false);
+  const [importingExcel, setImportingExcel] = useState(false);
   const isSyncingRef = useRef(false);
+  const lastSyncTimeRef = useRef<number>(0);
+  const MIN_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 
   const triggerLanguageChangeWithRetry = (code: string, attempts = 20) => {
     const select = document.querySelector('.goog-te-combo') as HTMLSelectElement;
@@ -149,34 +155,34 @@ export function App() {
     }
   };
 
-  // On first visit with a non-English detected language, trigger Google Translate
-  useEffect(() => {
-    const lang = localStorage.getItem('appLanguage') || 'en';
-    if (lang !== 'en' && lang !== 'zh-TW') {
-      if (!document.getElementById('google-translate-script')) {
-        const script = document.createElement('script');
-        script.id = 'google-translate-script';
-        script.src = '//translate.google.com/translate_a/element.js?cb=googleTranslateElementInit';
-        document.body.appendChild(script);
-        (window as any).googleTranslateElementInit = () => {
-          new (window as any).google.translate.TranslateElement(
-            { pageLanguage: 'en', includedLanguages: 'en,zh-CN,ja,ko', autoDisplay: false },
-            'google_translate_element'
-          );
-          triggerLanguageChangeWithRetry(lang);
-        };
-      }
+  // Google Translate is only loaded on demand when user picks a non-zh-TW language
+  const loadGoogleTranslate = (code: string) => {
+    if (!document.getElementById('google-translate-script')) {
+      const script = document.createElement('script');
+      script.id = 'google-translate-script';
+      script.src = '//translate.google.com/translate_a/element.js?cb=googleTranslateElementInit';
+      document.body.appendChild(script);
+      (window as any).googleTranslateElementInit = () => {
+        new (window as any).google.translate.TranslateElement(
+          { pageLanguage: 'en', includedLanguages: 'en,zh-CN,ja,ko', autoDisplay: false },
+          'google_translate_element'
+        );
+        triggerLanguageChangeWithRetry(code);
+      };
+    } else {
+      triggerLanguageChangeWithRetry(code);
     }
-  }, []);
+  };
+
   const [formData, setFormData] = useState<Partial<Trip>>({
     name: '',
     startDate: '',
     endDate: '',
     destination: '',
     coverPhoto: '',
-    favorite: false,
   });
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const excelInputRef = useRef<HTMLInputElement>(null);
   const tripSelectorRef = useRef<HTMLDivElement>(null);
   const shareSelectorRef = useRef<HTMLDivElement>(null);
   const settingsDropdownRef = useRef<HTMLDivElement>(null);
@@ -234,20 +240,24 @@ export function App() {
       }
 
       setLoggedIn(true);
+
+      // Show UI immediately from localStorage, then sync in background
+      loadTrips();
+      const savedTripId = tripStorage.getCurrent();
+      if (savedTripId) setCurrentTripId(savedTripId);
+      setAuthReady(true);
+
+      // Background sync
       if (isSyncingRef.current) return;
       isSyncingRef.current = true;
       setSyncing(true);
       try {
         await syncFromFirestore();
         loadTrips();
-        const savedTripId = tripStorage.getCurrent();
-        if (savedTripId) {
-          setCurrentTripId(savedTripId);
-        }
+        lastSyncTimeRef.current = Date.now();
       } finally {
         setSyncing(false);
         isSyncingRef.current = false;
-        setAuthReady(true);
       }
     });
 
@@ -324,7 +334,6 @@ export function App() {
       destination: destinations[0].name,
       destinations: destinations,
       coverPhoto: formData.coverPhoto,
-      favorite: formData.favorite || false,
     };
 
     tripStorage.save(newTrip);
@@ -341,7 +350,6 @@ export function App() {
       endDate: '',
       destination: '',
       coverPhoto: '',
-      favorite: false,
     });
     setNewTripDestinations([]);
     setShowTripForm(false);
@@ -471,8 +479,40 @@ export function App() {
   };
 
   const deleteTrip = (tripId: string) => {
+    const trip = trips.find(t => t.id === tripId);
+    const currentUserId = auth.currentUser?.uid;
+    
+    // Only trip owner can delete
+    if (trip?.userId !== currentUserId) {
+      alert('Only the trip owner can delete the trip.');
+      return;
+    }
+    
     if (confirm('Delete this trip? All associated data will be removed.')) {
       tripStorage.delete(tripId);
+      if (currentTripId === tripId) {
+        setCurrentTripId(null);
+      }
+      loadTrips();
+    }
+  };
+
+  const quitTrip = (tripId: string) => {
+    const trip = trips.find(t => t.id === tripId);
+    const currentUserId = auth.currentUser?.uid;
+    
+    if (!trip || !currentUserId) return;
+    
+    if (confirm('Quit this trip? You will no longer have access to it.')) {
+      // Remove current user from sharedWith array
+      const updatedSharedWith = (trip.sharedWith || []).filter(uid => uid !== currentUserId);
+      const updatedTrip: Trip = {
+        ...trip,
+        sharedWith: updatedSharedWith,
+      };
+      tripStorage.save(updatedTrip);
+      
+      // If the current trip is the one we're quitting, clear selection
       if (currentTripId === tripId) {
         setCurrentTripId(null);
       }
@@ -670,45 +710,9 @@ export function App() {
       }
     };
     reader.readAsText(file);
-    
-    // Reset file input
+
     if (event.target) {
       event.target.value = '';
-    }
-  };
-
-  // Share trip via link (generates shareable JSON)
-  const handleShareTrip = async () => {
-    if (!currentTrip) {
-      alert('Please select a trip to share');
-      return;
-    }
-
-    const exportData = {
-      trip: currentTrip,
-      schedules: localStorage.getItem('tripplanner_schedules') 
-        ? JSON.parse(localStorage.getItem('tripplanner_schedules') || '[]').filter((s: any) => s.tripId === currentTripId)
-        : [],
-      expenses: localStorage.getItem('tripplanner_expenses')
-        ? JSON.parse(localStorage.getItem('tripplanner_expenses') || '[]').filter((e: any) => e.tripId === currentTripId)
-        : [],
-      shoppingItems: localStorage.getItem('tripplanner_shopping')
-        ? JSON.parse(localStorage.getItem('tripplanner_shopping') || '[]').filter((s: any) => s.tripId === currentTripId)
-        : [],
-      travelInfo: localStorage.getItem('tripplanner_travel_info')
-        ? JSON.parse(localStorage.getItem('tripplanner_travel_info') || '[]').filter((i: any) => i.tripId === currentTripId)
-        : [],
-    };
-
-    const dataStr = JSON.stringify(exportData);
-    
-    try {
-      await navigator.clipboard.writeText(dataStr);
-      alert('Trip data copied to clipboard! Share this with others to import.');
-      setShowImportExport(false);
-    } catch (error) {
-      console.error('Failed to copy:', error);
-      alert('Failed to copy to clipboard. Please use the Export button instead.');
     }
   };
 
@@ -733,11 +737,8 @@ export function App() {
     const formatDate = (dateStr: string): string => {
       if (!dateStr) return '';
       try {
-        const date = new Date(dateStr);
-        return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-      } catch {
-        return dateStr;
-      }
+        return new Date(dateStr).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+      } catch { return dateStr; }
     };
 
     // Get schedule data only
@@ -745,31 +746,20 @@ export function App() {
       ? JSON.parse(localStorage.getItem('tripplanner_schedules') || '[]').filter((s: any) => s.tripId === currentTripId)
       : [];
 
-    let csv = '';
-    
-    // BOM for UTF-8 (helps Excel recognize encoding)
-    csv += '\uFEFF';
-
-    // Trip Info Section
+    let csv = '\uFEFF';
     csv += 'TRIP INFORMATION\n';
     csv += 'Name,Destinations,Start Date,End Date\n';
     const destinations = currentTrip.destinations && currentTrip.destinations.length > 0
-      ? currentTrip.destinations.map(d => d.name).join(' → ')
+      ? currentTrip.destinations.map(d => d.name).join(' \u2192 ')
       : currentTrip.destination;
-    csv += `${escapeCSV(currentTrip.name)},${escapeCSV(destinations)},${escapeCSV(formatDate(currentTrip.startDate))},${escapeCSV(formatDate(currentTrip.endDate))}\n`;
-    csv += '\n';
-
-    // Schedule Section
+    csv += `${escapeCSV(currentTrip.name)},${escapeCSV(destinations)},${escapeCSV(formatDate(currentTrip.startDate))},${escapeCSV(formatDate(currentTrip.endDate))}\n\n`;
     csv += 'SCHEDULE\n';
     csv += 'Date,From Time,To Time,Location,Google Maps Link,Notes\n';
     if (schedules.length > 0) {
-      // Sort by date and time
-      const sortedSchedules = [...schedules].sort((a: any, b: any) => {
-        const dateCompare = (a.date || '').localeCompare(b.date || '');
-        if (dateCompare !== 0) return dateCompare;
-        return (a.timeFrom || '').localeCompare(b.timeFrom || '');
-      });
-      sortedSchedules.forEach((item: any) => {
+      [...schedules].sort((a: any, b: any) => {
+        const d = (a.date || '').localeCompare(b.date || '');
+        return d !== 0 ? d : (a.timeFrom || '').localeCompare(b.timeFrom || '');
+      }).forEach((item: any) => {
         csv += `${escapeCSV(formatDate(item.date))},${escapeCSV(item.timeFrom)},${escapeCSV(item.timeTo || '')},${escapeCSV(item.location)},${escapeCSV(item.googleMapsLink || '')},${escapeCSV(item.notes || '')}\n`;
       });
     } else {
@@ -790,137 +780,179 @@ export function App() {
     setShowImportExport(false);
   };
 
-  // Paste from clipboard import
-  const handlePasteImport = async () => {
-    try {
-      const clipText = await navigator.clipboard.readText();
-      if (!clipText || !clipText.trim()) {
-        alert('Clipboard is empty. Please copy trip data first.');
-        return;
-      }
+  const handleImportExcel = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file || !currentTrip) return;
+    if (event.target) event.target.value = '';
 
-      let importData: any;
-      try {
-        importData = JSON.parse(clipText);
-      } catch {
-        alert('Clipboard does not contain valid trip data. Please copy trip data from the "Copy to Clipboard" export first.');
-        return;
-      }
-
-      // Handle different export formats
-      let tripData: any = null;
-      let schedulesData: any[] = [];
-      let expensesData: any[] = [];
-      let shoppingData: any[] = [];
-      let travelInfoData: any[] = [];
-
-      if (importData.trip) {
-        tripData = importData.trip;
-        schedulesData = importData.schedules || [];
-        expensesData = importData.expenses || [];
-        shoppingData = importData.shoppingItems || importData.shopping || [];
-        travelInfoData = importData.travelInfo || [];
-      } else if (importData.id && importData.name) {
-        tripData = importData;
-      } else {
-        alert('Unrecognized data format. Please use data from "Copy to Clipboard" export.');
-        return;
-      }
-
-      const newTripId = generateId();
-      const importedTrip: Trip = {
-        id: newTripId,
-        userId: auth.currentUser?.uid || '',
-        name: `${tripData.name} (Imported)`,
-        startDate: tripData.startDate || '',
-        endDate: tripData.endDate || '',
-        destination: tripData.destination || '',
-        destinations: tripData.destinations || [
-          {
-            id: generateId(),
-            name: tripData.destination || '',
-            startDate: tripData.startDate || '',
-            endDate: tripData.endDate || '',
-          }
-        ],
-        themeColor: tripData.themeColor,
-      };
-
-      tripStorage.save(importedTrip);
-
-      if (Array.isArray(schedulesData)) {
-        schedulesData.forEach((item: any) => {
-          scheduleStorage.save({
-            ...item,
-            id: generateId(),
-            tripId: newTripId,
-            timeFrom: item.timeFrom || item.time || '',
-            timeTo: item.timeTo || '',
-            location: item.location || '',
-            category: item.category || 'other',
-            googleMapsLink: item.googleMapsLink || '',
-            notes: item.notes || '',
-          });
-        });
-      }
-
-      if (Array.isArray(expensesData)) {
-        expensesData.forEach((item: any) => {
-          expenseStorage.save({
-            ...item,
-            id: generateId(),
-            tripId: newTripId,
-            item: item.item || '',
-            currency: item.currency || 'HKD',
-            price: Number(item.price) || 0,
-            category: item.category || 'other',
-            whoPaid: item.whoPaid || '',
-          });
-        });
-      }
-
-      if (Array.isArray(shoppingData)) {
-        shoppingData.forEach((item: any) => {
-          shoppingStorage.save({
-            ...item,
-            id: generateId(),
-            tripId: newTripId,
-            name: item.name || '',
-            category: item.category || '',
-            link: item.link || item.imageUrl || '',
-            purchased: item.purchased || false,
-          });
-        });
-      }
-
-      if (Array.isArray(travelInfoData)) {
-        travelInfoData.forEach((item: any) => {
-          travelInfoStorage.save({
-            ...item,
-            id: generateId(),
-            tripId: newTripId,
-            type: item.type || 'hotel',
-            name: item.name || '',
-            confirmationNumber: item.confirmationNumber || '',
-            date: item.date || '',
-            time: item.time || '',
-            address: item.address || '',
-            phone: item.phone || '',
-            notes: item.notes || '',
-          });
-        });
-      }
-
-      tripStorage.setCurrent(newTripId);
-      setCurrentTripId(newTripId);
-      loadTrips();
-      setShowImportExport(false);
-
-      alert('Trip imported from clipboard successfully! All schedules, expenses, shopping items, and travel info have been restored.');
-    } catch (error) {
-      console.error('Paste import error:', error);
-      alert('Failed to read clipboard. Please make sure you have granted clipboard permission, or use the "Import Trip" file upload instead.');
+    // Check file size (limit to 10MB for mobile compatibility)
+    const maxSize = 10 * 1024 * 1024;
+    if (file.size > maxSize) {
+      alert(`File is too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Please keep it under 10MB.`);
+      return;
     }
+
+    // Load API key from localStorage or Firestore
+    let apiKey = localStorage.getItem('groq_api_key');
+    if (!apiKey && auth.currentUser) {
+      try {
+        const snap = await import('firebase/firestore').then(({ doc, getDoc }) =>
+          getDoc(doc(db, 'userProfiles', auth.currentUser!.uid))
+        );
+        apiKey = snap.data()?.groqKey ?? null;
+      } catch {}
+    }
+    if (!apiKey) {
+      alert('Please set up your Groq API key in the AI Assistant first.');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onerror = () => {
+      setImportingExcel(false);
+      alert('Failed to read file. Please try again or use a different file.');
+    };
+    reader.onabort = () => {
+      setImportingExcel(false);
+      alert('File reading was aborted.');
+    };
+    reader.onload = async (e) => {
+      setImportingExcel(true);
+      try {
+        const xlsx = await import('xlsx');
+        const wb = xlsx.read(e.target?.result, { type: 'array', cellDates: true });
+
+        // Extract all sheets as plain text for AI
+        // Convert Excel numeric times (decimals) to HH:MM strings
+        const excelTimeToStr = (v: any): string => {
+          if (v === undefined || v === null || v === '') return '';
+          if (typeof v === 'number' && v >= 0 && v < 1) {
+            const totalMins = Math.round(v * 24 * 60);
+            const h = Math.floor(totalMins / 60);
+            const m = totalMins % 60;
+            return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+          }
+          // Already a string like "5:15" or "08:30 - 14:15"
+          return String(v).trim();
+        };
+
+        const sheetsText = wb.SheetNames.map(name => {
+          const rows: any[][] = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true });
+          const text = rows.map(r => r.map((cell: any) => {
+            // Convert numeric time decimals to readable HH:MM
+            if (typeof cell === 'number' && cell >= 0 && cell < 1) return excelTimeToStr(cell);
+            return cell;
+          }).join(' | ')).join('\n');
+          return `Sheet "${name}":\n${text}`;
+        }).join('\n\n');
+
+        const prompt = `You are a travel data parser. The user has uploaded an Excel file for their trip "${currentTrip.name}" (${currentTrip.startDate} to ${currentTrip.endDate}).
+
+Here is the raw Excel content:
+${sheetsText}
+
+The Excel likely has columns in this order: Date | Time | Activity/Description | Detail/Name | Google Maps Link | Confirmation Number (columns may vary).
+
+Rules:
+- Skip header rows (rows with column label text, not data)
+- The "location" field = the most specific place/activity name available. If there are two text columns, combine them as "Detail - Activity" or use whichever is more specific
+- Dates: YYYY-MM-DD. If a date cell is empty, inherit the date from the row above
+- Times: HH:MM 24-hour format. A single time like "5:15" means timeFrom="05:15", timeTo="". A range like "08:30 - 14:15" means timeFrom="08:30", timeTo="14:15". NEVER leave timeFrom empty if any time exists in that row
+- If a row has a confirmation number, it is likely a hotel/flight/info item, not a schedule item
+- Classify category: transportation (flights, trains, buses, taxis), hotel (check-in/check-out), food (meals, restaurants), shopping, attraction (sightseeing), other
+- Use "" for missing fields, never null
+
+Return ONLY this JSON, no markdown, no explanation:
+{
+  "schedules": [{"date":"YYYY-MM-DD","timeFrom":"HH:MM","timeTo":"","location":"string","category":"food|shopping|hotel|transportation|attraction|other","notes":"string","googleMapsLink":"string"}],
+  "expenses": [{"date":"YYYY-MM-DD","item":"string","price":0.0,"currency":"HKD","category":"food|shopping|hotel|transportation|attraction|other","whoPaid":"string"}],
+  "shopping": [{"name":"string","category":"string","link":"string"}],
+  "info": [{"type":"hotel|flight|car-rental|restaurant","name":"string","confirmationNumber":"string","date":"YYYY-MM-DD","time":"HH:MM","address":"string","phone":"string","notes":"string"}]
+}`;
+
+        const isDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+        
+        // Create abort controller for timeout (30 seconds for mobile)
+        const abortController = new AbortController();
+        const timeoutId = setTimeout(() => abortController.abort(), 30000);
+        
+        const res = isDev
+          ? await fetch('https://api.groq.com/openai/v1/chat/completions', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+              body: JSON.stringify({ model: 'llama-3.3-70b-versatile', messages: [{ role: 'user', content: prompt }] }),
+              signal: abortController.signal,
+            })
+          : await fetch('/.netlify/functions/groq-proxy', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ apiKey, messages: [{ role: 'user', content: prompt }], model: 'llama-3.3-70b-versatile' }),
+              signal: abortController.signal,
+            });
+
+        clearTimeout(timeoutId);
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData?.error?.message || `API error ${res.status}`);
+        }
+        const data = await res.json();
+        const reply = data.choices?.[0]?.message?.content ?? '';
+
+        const jsonMatch = reply.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) throw new Error('No JSON in response');
+        const parsed = JSON.parse(jsonMatch[0]);
+
+        let count = 0;
+        (parsed.schedules || []).forEach((s: any) => {
+          if (!s.location && !s.date) return;
+          // Normalize time: strip seconds if present (e.g. "17:30:00" -> "17:30")
+          const normalizeTime = (t: string) => t ? t.replace(/^(\d{1,2}:\d{2})(:\d{2})?$/, '$1').padStart(5, '0') : '';
+          const timeFrom = normalizeTime(s.timeFrom || s.time || '');
+          const timeTo = normalizeTime(s.timeTo && s.timeTo !== (s.timeFrom || s.time) ? s.timeTo : '');
+          const location = [s.location, s.detail].filter(Boolean).join(' - ') || s.name || '';
+          scheduleStorage.save({ id: generateId(), tripId: currentTrip.id, date: s.date || '', timeFrom, timeTo, location, category: s.category || 'other', notes: s.notes || '', googleMapsLink: s.googleMapsLink || '' });
+          count++;
+        });
+        (parsed.expenses || []).forEach((e: any) => {
+          if (!e.item) return;
+          expenseStorage.save({ id: generateId(), tripId: currentTrip.id, date: e.date || new Date().toISOString().slice(0,10), item: e.item, price: Number(e.price) || 0, currency: e.currency || 'HKD', category: e.category || 'other', whoPaid: e.whoPaid || '', settled: false });
+          count++;
+        });
+        (parsed.shopping || []).forEach((s: any) => {
+          if (!s.name) return;
+          shoppingStorage.save({ id: generateId(), tripId: currentTrip.id, name: s.name, category: s.category || '', link: s.link || '', purchased: false });
+          count++;
+        });
+        (parsed.info || []).forEach((i: any) => {
+          if (!i.name) return;
+          travelInfoStorage.save({ id: generateId(), tripId: currentTrip.id, type: i.type || 'hotel', name: i.name, confirmationNumber: i.confirmationNumber || '', date: i.date || '', time: i.time || '', address: i.address || '', phone: i.phone || '', notes: i.notes || '' });
+          count++;
+        });
+
+        loadTrips();
+        setImportingExcel(false);
+        alert(`✓ Imported ${count} items from your Excel file!`);
+      } catch (err: any) {
+        setImportingExcel(false);
+        console.error('[Excel Import Error]', err);
+        
+        let errorMsg = 'Import failed';
+        if (err.name === 'AbortError') {
+          errorMsg = 'Request timed out. Please check your internet connection and try again.';
+        } else if (err.message?.includes('JSON')) {
+          errorMsg = 'Could not parse AI response. The file format may not be recognized.';
+        } else if (err.message?.includes('API error')) {
+          errorMsg = 'API error. Please ensure your Groq API key is valid and check your network.';
+        } else if (err.message) {
+          errorMsg = `Import failed: ${err.message}`;
+        }
+        
+        alert(errorMsg);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+    setShowImportExport(false);
   };
 
   const handleSync = async () => {
@@ -954,36 +986,11 @@ export function App() {
     setShowSettingsDropdown(false);
     setMobileMenuOpen(false);
     localStorage.setItem('userPickedLanguage', code);
-    if (code === 'zh-TW') {
-      setSelectedLanguage(code);
-      localStorage.setItem('appLanguage', code);
-      window.dispatchEvent(new Event('languagechange'));
-    } else {
-      setSelectedLanguage(code);
-      localStorage.setItem('appLanguage', code);
-      if (!document.getElementById('google-translate-script')) {
-        const script = document.createElement('script');
-        script.id = 'google-translate-script';
-        script.src = '//translate.google.com/translate_a/element.js?cb=googleTranslateElementInit';
-        document.body.appendChild(script);
-        (window as any).googleTranslateElementInit = () => {
-          new (window as any).google.translate.TranslateElement(
-            { pageLanguage: 'en', includedLanguages: 'en,zh-CN,ja,ko', autoDisplay: false },
-            'google_translate_element'
-          );
-          setTimeout(() => triggerLanguageChangeWithRetry(code), 300);
-        };
-      } else {
-        triggerLanguageChangeWithRetry(code);
-      }
-    }
-  };
-
-  const triggerLanguageChange = (code: string) => {
-    const select = document.querySelector('.goog-te-combo') as HTMLSelectElement;
-    if (select) {
-      select.value = code;
-      select.dispatchEvent(new Event('change'));
+    setSelectedLanguage(code);
+    localStorage.setItem('appLanguage', code);
+    window.dispatchEvent(new Event('languagechange'));
+    if (code !== 'zh-TW' && code !== 'en') {
+      loadGoogleTranslate(code);
     }
   };
 
@@ -993,6 +1000,23 @@ export function App() {
       await logout();
       setLoggedIn(false);
     }
+  };
+
+  const handleChangePassword = async (oldPassword: string, newPassword: string) => {
+    if (!auth.currentUser) {
+      throw new Error('You must be logged in to change password');
+    }
+    const { updatePassword, reauthenticateWithCredential, EmailAuthProvider } = await import('firebase/auth');
+    
+    // Re-authenticate with old password to refresh session
+    const credential = EmailAuthProvider.credential(auth.currentUser.email!, oldPassword);
+    await reauthenticateWithCredential(auth.currentUser, credential);
+    
+    // Now update password (session is fresh after re-auth)
+    await updatePassword(auth.currentUser, newPassword);
+    alert('Password changed successfully!');
+    setShowPasswordModal(false);
+    setShowChangePassword(false);
   };
 
   if (!authReady) {
@@ -1043,11 +1067,11 @@ export function App() {
                     setShowSettingsDropdown(!showSettingsDropdown);
                     setShowTripSelector(false);
                   }}
-                  className="flex items-center gap-1 px-2 sm:px-3 py-1.5 sm:py-2 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+                  className="flex items-center gap-1.5 px-3 py-2 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
                   title={t('Settings')}
                 >
                   <Settings className="w-4 h-4 text-gray-600" />
-                  <span className="text-xs font-medium text-gray-600 hidden sm:inline">{t('Settings')}</span>
+                  <span className="text-sm font-medium text-gray-600 hidden sm:inline">{t('Settings')}</span>
                   <ChevronDown className="w-3 h-3 text-gray-500" />
                 </button>
 
@@ -1120,20 +1144,23 @@ export function App() {
                               <Upload className="w-5 h-5 text-blue-600" />
                               <div><div className="text-sm font-medium text-gray-900">{t('Import Trip')}</div><div className="text-xs text-gray-500">{t('Upload JSON file')}</div></div>
                             </button>
-                            <button onClick={handleShareTrip} disabled={!currentTrip} className="w-full flex items-center gap-3 px-3 py-2 text-left rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
-                              <Share2 className="w-5 h-5 text-purple-600" />
-                              <div><div className="text-sm font-medium text-gray-900">{t('Copy to Clipboard')}</div><div className="text-xs text-gray-500">{t('Share trip data')}</div></div>
-                            </button>
-                            <button onClick={handlePasteImport} className="w-full flex items-center gap-3 px-3 py-2 text-left rounded-lg hover:bg-gray-50">
-                              <Download className="w-5 h-5 text-orange-600" />
-                              <div><div className="text-sm font-medium text-gray-900">{t('Paste from Clipboard')}</div><div className="text-xs text-gray-500">{t('Import shared data')}</div></div>
-                            </button>
-                          </div>
+                            <button onClick={() => { setShowImportExport(false); excelInputRef.current?.click(); }} disabled={!currentTrip} className="w-full flex items-center gap-3 px-3 py-2 text-left rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
+                              <FileSpreadsheet className="w-5 h-5 text-purple-600" />
+                              <div><div className="text-sm font-medium text-gray-900">Import from Excel</div><div className="text-xs text-gray-500">AI parses any format</div></div>
+                            </button>                          </div>
                         </div>
                       )}
                     </div>
 
                     <div className="border-t border-gray-100 mt-1 pt-1">
+                      <button
+                        onClick={() => { setShowChangePassword(true); setShowSettingsDropdown(false); setShowPasswordModal(true); }}
+                        className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-gray-50"
+                      >
+                        <Lock className="w-4 h-4 text-gray-600" />
+                        <span className="text-sm text-gray-700">{t('Change Password')}</span>
+                      </button>
+
                       <button
                         onClick={() => { handleLogout(); setShowSettingsDropdown(false); }}
                         className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-red-50"
@@ -1147,12 +1174,21 @@ export function App() {
               </div>
 
               {/* Hidden file input for import */}
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".json"
-                onChange={handleImportTrip}
-                className="hidden"
+              <input 
+                ref={fileInputRef} 
+                type="file" 
+                accept=".json" 
+                onChange={handleImportTrip} 
+                className="hidden" 
+                style={{ display: 'none' }}
+              />
+              <input 
+                ref={excelInputRef} 
+                type="file" 
+                accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+                onChange={handleImportExcel} 
+                className="hidden" 
+                style={{ display: 'none' }}
               />
 
               {/* Trip Selector */}
@@ -1164,12 +1200,12 @@ export function App() {
                     setShowImportExport(false);
                     setShowSettingsDropdown(false);
                   }}
-                  className="flex items-center gap-1 sm:gap-2 px-2 sm:px-4 py-1.5 sm:py-2 bg-purple-100 rounded-lg hover:bg-purple-200 transition-colors max-w-[140px] sm:max-w-[220px]"
+                  className="flex items-center gap-1.5 px-3 py-2 bg-purple-100 rounded-lg hover:bg-purple-200 transition-colors max-w-[220px]"
                 >
-                  <span className="text-xs sm:text-sm font-medium text-purple-700 truncate flex-1">
+                  <span className="text-sm font-medium text-purple-700 truncate flex-1">
                     {currentTrip ? currentTrip.name : 'Select Trip'}
                   </span>
-                  <ChevronDown className="w-3 h-3 sm:w-4 sm:h-4 text-purple-500 flex-shrink-0" />
+                  <ChevronDown className="w-4 h-4 text-purple-500 flex-shrink-0" />
                 </button>
 
                 {showTripSelector && (() => {
@@ -1208,12 +1244,22 @@ export function App() {
                                    : trip.destination}
                                </div>
                              </button>
+                             {trip.userId === auth.currentUser?.uid ? (
                              <button
                                onClick={() => deleteTrip(trip.id)}
                                className="p-1 text-gray-400 hover:text-red-600 flex-shrink-0"
                              >
                                <X className="w-4 h-4" />
                              </button>
+                             ) : (
+                             <button
+                               onClick={() => quitTrip(trip.id)}
+                               className="p-1 text-gray-400 hover:text-orange-600 flex-shrink-0"
+                               title="Quit trip"
+                             >
+                               <LogOut className="w-4 h-4" />
+                             </button>
+                             )}
                              <button
                                onClick={(e) => { e.stopPropagation(); setShowTripSelector(false); setSharingTrip(trip); }}
                                className="p-1 text-gray-400 hover:text-purple-600 flex-shrink-0"
@@ -1247,20 +1293,22 @@ export function App() {
               {/* New Trip Button */}
               <button
                 onClick={() => setShowTripForm(true)}
-                className="flex items-center gap-1 sm:gap-2 px-2 sm:px-4 py-1.5 sm:py-2 bg-purple-400 text-white rounded-lg hover:bg-purple-500 transition-colors"
+                className="flex items-center gap-1.5 px-3 py-2 bg-purple-400 text-white rounded-lg hover:bg-purple-500 transition-colors"
+                aria-label={t('New Trip')}
               >
-                <Plus className="w-4 h-4 sm:w-5 sm:h-5" />
-                <span className="hidden sm:inline">{t('New Trip')}</span>
+                <Plus className="w-4 h-4" />
+                <span className="hidden sm:inline text-sm font-medium">{t('New Trip')}</span>
               </button>
 
               {/* Join Trip Button */}
               <button
                 onClick={() => setSharingTrip({ id: '', userId: '', name: '', startDate: '', endDate: '', destination: '', destinations: [] })}
-                className="flex items-center gap-1 sm:gap-2 px-2 sm:px-4 py-1.5 sm:py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+                className="flex items-center gap-1.5 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
                 title={t('Join Trip')}
+                aria-label={t('Join Trip')}
               >
-                <Users className="w-4 h-4 sm:w-5 sm:h-5" />
-                <span className="hidden sm:inline">{t('Join Trip')}</span>
+                <Users className="w-4 h-4" />
+                <span className="hidden sm:inline text-sm font-medium">{t('Join Trip')}</span>
               </button>
             </div>
 
@@ -1269,6 +1317,7 @@ export function App() {
               <button
                 onClick={() => setMobileMenuOpen(true)}
                 className="flex items-center justify-center w-10 h-10 bg-gray-100 rounded-lg"
+                aria-label={t('Open navigation menu')}
               >
                 <Menu className="w-5 h-5 text-gray-600" />
               </button>
@@ -1317,7 +1366,7 @@ export function App() {
                 </div>
                 <span className="font-bold text-white text-sm">{t('Your Travel Diary')}</span>
               </div>
-              <button onClick={() => setMobileMenuOpen(false)} className="text-white/70 hover:text-white p-1">
+              <button onClick={() => setMobileMenuOpen(false)} className="text-white/70 hover:text-white p-2" aria-label={t('Close menu')} title={t('Close menu')}>
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -1361,12 +1410,22 @@ export function App() {
                             >
                               <Users className="w-3.5 h-3.5" />
                             </button>
+                            {trip.userId === auth.currentUser?.uid ? (
                             <button
                               onClick={() => deleteTrip(trip.id)}
                               className="p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 flex-shrink-0"
                             >
                               <X className="w-3.5 h-3.5" />
                             </button>
+                            ) : (
+                            <button
+                              onClick={() => quitTrip(trip.id)}
+                              className="p-1.5 rounded-lg text-gray-300 hover:text-orange-500 hover:bg-orange-50 flex-shrink-0"
+                              title="Quit trip"
+                            >
+                              <LogOut className="w-3.5 h-3.5" />
+                            </button>
+                            )}
                           </div>
                         ))}
                         {tripsToShow.length === 0 && (
@@ -1434,8 +1493,7 @@ export function App() {
                   { icon: <FileSpreadsheet className="w-4 h-4 text-emerald-600" />, bg: 'bg-emerald-100', label: t('Export to Excel'), sub: t('Download as CSV file'), action: () => { handleExportCSV(); setMobileMenuOpen(false); }, disabled: !currentTrip },
                   { icon: <Download className="w-4 h-4 text-green-600" />, bg: 'bg-green-100', label: t('Export Trip'), sub: t('Download as JSON file'), action: () => { handleExportTrip(); setMobileMenuOpen(false); }, disabled: !currentTrip },
                   { icon: <Upload className="w-4 h-4 text-blue-600" />, bg: 'bg-blue-100', label: t('Import Trip'), sub: t('Upload JSON file'), action: () => { fileInputRef.current?.click(); setMobileMenuOpen(false); }, disabled: false },
-                  { icon: <Share2 className="w-4 h-4 text-purple-600" />, bg: 'bg-purple-100', label: t('Copy to Clipboard'), sub: t('Share trip data'), action: () => { handleShareTrip(); setMobileMenuOpen(false); }, disabled: !currentTrip },
-                  { icon: <Download className="w-4 h-4 text-orange-600" />, bg: 'bg-orange-100', label: t('Paste from Clipboard'), sub: t('Import shared data'), action: () => { handlePasteImport(); setMobileMenuOpen(false); }, disabled: false },
+                  { icon: <FileSpreadsheet className="w-4 h-4 text-purple-600" />, bg: 'bg-purple-100', label: 'Import from Excel', sub: 'AI parses any format', action: () => { excelInputRef.current?.click(); setMobileMenuOpen(false); }, disabled: !currentTrip },
                 ].map(({ icon, bg, label, sub, action, disabled }) => (
                   <button
                     key={label}
@@ -1485,6 +1543,15 @@ export function App() {
                   </div>
                 )}
               </div>
+              <button
+                onClick={() => { setShowChangePassword(true); setShowPasswordModal(true); setMobileMenuOpen(false); }}
+                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0">
+                  <Lock className="w-4 h-4 text-gray-600" />
+                </div>
+                {t('Change Password')}
+              </button>
               <button
                 onClick={() => { handleLogout(); setMobileMenuOpen(false); }}
                 className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-red-600 hover:bg-red-50 transition-colors"
@@ -1647,17 +1714,6 @@ export function App() {
                 </div>
               </div>
 
-              <div className="flex items-center gap-3">
-                <input
-                  type="checkbox"
-                  id="newTripFavorite"
-                  checked={formData.favorite || false}
-                  onChange={(e) => setFormData({ ...formData, favorite: e.target.checked })}
-                  className="w-4 h-4 text-purple-500 rounded focus:ring-purple-400"
-                />
-                <label htmlFor="newTripFavorite" className="text-sm font-medium text-gray-700">{t('⭐ Mark as Favourite')}</label>
-              </div>
-
               <div className="flex gap-2 pt-2">
                 <button
                   type="submit"
@@ -1728,7 +1784,7 @@ export function App() {
         </div>
       )}
               {/* Main Content */}
-      <main className={`overflow-x-hidden ${activeTab === 'home' && !showTripHome ? '' : 'max-w-7xl mx-auto px-2 sm:px-4 lg:px-8 py-4 sm:py-8'}`}>
+      <main role="main" className={`overflow-x-hidden ${activeTab === 'home' && !showTripHome ? '' : 'max-w-7xl mx-auto px-2 sm:px-4 lg:px-8 py-4 sm:py-8'}`}>
         {activeTab === 'home' && !showTripHome && (
           <LandingPage
             trips={trips}
@@ -1764,6 +1820,19 @@ export function App() {
 
       <InstallPrompt />
       <AiAgent currentTrip={currentTrip} onScheduleAdded={() => setActiveTab('schedule')} />
+
+      {/* Excel Import Loading Overlay */}
+      {importingExcel && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl shadow-xl px-8 py-6 flex flex-col items-center gap-4">
+            <div className="w-12 h-12 border-4 border-purple-200 border-t-purple-500 rounded-full animate-spin" />
+            <div className="text-center">
+              <p className="font-semibold text-gray-900">Importing with AI...</p>
+              <p className="text-sm text-gray-500 mt-1">Analysing your Excel file</p>
+            </div>
+          </div>
+        </div>
+      )}
       {sharingTrip && (
         <TripSharingModal
           trip={sharingTrip}
@@ -1772,6 +1841,14 @@ export function App() {
             setTrips(prev => prev.map(t => t.id === updated.id ? updated : t));
             if (sharingTrip.id === updated.id) setSharingTrip(updated);
           }}
+        />
+      )}
+
+      {/* Change Password Modal */}
+      {showPasswordModal && (
+        <ChangePasswordModal
+          onClose={() => { setShowPasswordModal(false); setShowChangePassword(false); }}
+          onSubmit={handleChangePassword}
         />
       )}
     </div>

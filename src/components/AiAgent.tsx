@@ -190,10 +190,36 @@ export function AiAgent({ currentTrip, onScheduleAdded }: AiAgentProps) {
   const [error, setError] = useState('');
   const [proposal, setProposal] = useState<ScheduleProposal | null>(null);
   const [savedMsg, setSavedMsg] = useState('');
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  const dragging = useRef(false);
+  const dragOffset = useRef({ x: 0, y: 0 });
+  const hasDragged = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
+
+  const handlePointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
+    dragging.current = true;
+    hasDragged.current = false;
+    const btn = buttonRef.current!;
+    const rect = btn.getBoundingClientRect();
+    dragOffset.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    btn.setPointerCapture(e.pointerId);
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (!dragging.current) return;
+    hasDragged.current = true;
+    const x = Math.min(Math.max(e.clientX - dragOffset.current.x, 0), window.innerWidth - 56);
+    const y = Math.min(Math.max(e.clientY - dragOffset.current.y, 0), window.innerHeight - 56);
+    setPos({ x, y });
+  };
+
+  const handlePointerUp = (e: React.PointerEvent<HTMLButtonElement>) => {
+    dragging.current = false;
+    if (!hasDragged.current) setOpen(o => !o);
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -393,15 +419,27 @@ export function AiAgent({ currentTrip, onScheduleAdded }: AiAgentProps) {
     <>
       <button
         ref={buttonRef}
-        onClick={() => setOpen(o => !o)}
-        className="fixed bottom-20 right-6 z-40 w-14 h-14 bg-purple-500 hover:bg-purple-600 text-white rounded-full shadow-lg flex items-center justify-center transition-colors"
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        className="fixed z-40 w-14 h-14 bg-purple-500 hover:bg-purple-600 text-white rounded-full shadow-lg flex items-center justify-center transition-colors touch-none select-none"
+        style={pos ? { left: pos.x, top: pos.y, bottom: 'auto', right: 'auto' } : { bottom: '5rem', right: '1.5rem' }}
         title="AI Travel Assistant"
       >
         {open ? <ChevronDown className="w-6 h-6" /> : <Bot className="w-6 h-6" />}
       </button>
 
       {open && (
-        <div ref={panelRef} className="fixed bottom-36 right-6 z-40 w-80 sm:w-96 bg-white rounded-2xl shadow-2xl border border-gray-200 flex flex-col overflow-hidden" style={{ maxHeight: '70vh' }}>
+        <div
+          ref={panelRef}
+          className="fixed z-40 w-80 sm:w-96 bg-white rounded-2xl shadow-2xl border border-gray-200 flex flex-col overflow-hidden"
+          style={{
+            maxHeight: '70vh',
+            ...(pos
+              ? { left: Math.min(pos.x, window.innerWidth - 384), top: Math.max(pos.y - 420, 8), bottom: 'auto', right: 'auto' }
+              : { bottom: '9rem', right: '1.5rem' })
+          }}
+        >
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 bg-purple-500 text-white">
             <div className="flex items-center gap-2">

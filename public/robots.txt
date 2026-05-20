@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://yourtraveldiary.netlify.app/sitemap.xml
+Sitemap: https://your-simple-travel-diary.netlify.app/sitemap.xml

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Plus, Edit2, Trash2, DollarSign, X, User, CheckCircle2, Circle, Users } from 'lucide-react';
+import { Plus, Edit2, Trash2, DollarSign, X, User, CheckCircle2, Circle, Users, Download } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { Trip, Expense } from '../types';
 import { expenseStorage, generateId } from '../utils/storage';
@@ -41,7 +41,7 @@ function WhoPaidDropdown({ value, names, onChange, onNew, onDelete }: {
       <button
         type="button"
         onClick={() => setOpen(o => !o)}
-        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-left bg-white hover:bg-gray-50 focus:ring-2 focus:ring-purple-400 focus:border-transparent flex items-center justify-between"
+        className="w-full px-3 py-2 h-10 border border-gray-300 rounded-lg text-left bg-white hover:bg-gray-50 focus:ring-2 focus:ring-purple-400 focus:border-transparent flex items-center justify-between"
       >
         <span className={value ? 'text-gray-900' : 'text-gray-400'}>{value || '— None —'}</span>
         <span className="text-gray-400 text-xs">▾</span>
@@ -183,6 +183,52 @@ export function TravelExpenses({ currentTrip }: TravelExpensesProps) {
     setShowForm(true);
   };
 
+  const handleExportExpensesCSV = () => {
+    if (!currentTrip || expenses.length === 0) return;
+
+    const escapeCSV = (value: any): string => {
+      if (value === null || value === undefined) return '';
+      const str = String(value);
+      if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    };
+
+    const formatDate = (dateStr: string): string => {
+      if (!dateStr) return '';
+      try {
+        return new Date(dateStr).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+      } catch { return dateStr; }
+    };
+
+    let csv = '\uFEFF';
+    csv += 'Date,Item,Category,Currency,Price,Who Paid,Split With,Settled\n';
+    
+    [...expenses].sort((a, b) => a.date.localeCompare(b.date)).forEach(expense => {
+      const splitWith = Array.isArray(expense.splitWith) 
+        ? expense.splitWith.join(', ') 
+        : expense.splitWith === 'all' ? 'All travellers' 
+        : expense.splitWith === 'solo' ? 'Solo' : '';
+      
+      csv += `${escapeCSV(formatDate(expense.date))},${escapeCSV(expense.item)},${escapeCSV(expense.category)},${escapeCSV(expense.currency)},${escapeCSV(expense.price)},${escapeCSV(expense.whoPaid)},${escapeCSV(splitWith)},${expense.settled ? 'Yes' : 'No'}\n`;
+    });
+
+    // Add summary
+    csv += '\nSUMMARY\n';
+    csv += `Total Expenses:,${Object.entries(getTotalByCurrency()).map(([c, t]) => `${c} ${t.toFixed(2)}`).join(', ')}\n`;
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${currentTrip.name.replace(/\s+/g, '_')}_expenses_${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   const handleDelete = (id: string) => {
     if (confirm('Delete this expense?')) {
       expenseStorage.delete(id);
@@ -196,6 +242,15 @@ export function TravelExpenses({ currentTrip }: TravelExpensesProps) {
       settled: !expense.settled,
     };
     expenseStorage.save(updatedExpense);
+    loadExpenses();
+  };
+
+  const setAllExpensesSettled = (settled: boolean) => {
+    expenses.forEach(expense => {
+      if (expense.settled !== settled) {
+        expenseStorage.save({ ...expense, settled });
+      }
+    });
     loadExpenses();
   };
 
@@ -273,15 +328,6 @@ export function TravelExpenses({ currentTrip }: TravelExpensesProps) {
   const getTotalByCurrency = () => {
     const totals: Record<string, number> = {};
     expenses.forEach(expense => {
-      if (!totals[expense.currency]) totals[expense.currency] = 0;
-      totals[expense.currency] += expense.price;
-    });
-    return totals;
-  };
-
-  const getUnsettledTotalByCurrency = () => {
-    const totals: Record<string, number> = {};
-    expenses.filter(e => !e.settled && (e.splitWith === 'all' || e.splitWith === undefined)).forEach(expense => {
       if (!totals[expense.currency]) totals[expense.currency] = 0;
       totals[expense.currency] += expense.price;
     });
@@ -396,7 +442,7 @@ export function TravelExpenses({ currentTrip }: TravelExpensesProps) {
   const totalsByPayer = getTotalByPayer();
   const expenseByPerson = Object.keys(exchangeRates).length > 0 ? getExpenseByPerson() : {};
   const settlements = Object.keys(exchangeRates).length > 0 && travellerNames.length > 1 ? getSettlements() : [];
-  const unsettledByCurrency = getUnsettledTotalByCurrency();
+  const allExpensesSettled = expenses.length > 0 && expenses.every(expense => expense.settled);
   const groupedByDate = expenses.reduce((acc, expense) => {
     if (!acc[expense.date]) {
       acc[expense.date] = [];
@@ -409,18 +455,28 @@ export function TravelExpenses({ currentTrip }: TravelExpensesProps) {
     <div className="space-y-6 max-w-full overflow-x-hidden">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h2 className="text-xl sm:text-2xl font-bold text-gray-900">{t('Travel Expenses')}</h2>
-        <button
-          onClick={() => setShowForm(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-purple-400 text-white rounded-lg hover:bg-purple-500 transition-colors"
-        >
-          <Plus className="w-5 h-5" />
-          <span className="hidden sm:inline">{t('Add Expense')}</span>
-          <span className="sm:hidden">{t('Add')}</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleExportExpensesCSV}
+            disabled={expenses.length === 0}
+            className="flex items-center gap-2 px-4 py-2 h-10 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Download className="w-5 h-5" />
+            <span className="hidden sm:inline">{t('Export CSV')}</span>
+          </button>
+          <button
+            onClick={() => setShowForm(true)}
+            className="flex items-center gap-2 px-4 py-2 h-10 bg-purple-400 text-white rounded-lg hover:bg-purple-500 transition-colors"
+          >
+            <Plus className="w-5 h-5" />
+            <span className="hidden sm:inline">{t('Add Expense')}</span>
+            <span className="sm:hidden">{t('Add')}</span>
+          </button>
+        </div>
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
           <h3 className="text-sm font-medium text-gray-600 mb-2 flex items-center gap-1">
             <DollarSign className="w-4 h-4" />
@@ -465,11 +521,6 @@ export function TravelExpenses({ currentTrip }: TravelExpensesProps) {
           <div className="text-xs text-gray-500 mt-1">
             {t('Auto-converted from')} {Object.keys(totalsByCurrency).length} {t('currencies')}
           </div>
-        </div>
-
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-          <h3 className="text-sm font-medium text-gray-600 mb-2">{t('Total Items')}</h3>
-          <div className="text-xl sm:text-2xl font-bold text-gray-900">{expenses.length}</div>
         </div>
 
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
@@ -535,38 +586,8 @@ export function TravelExpenses({ currentTrip }: TravelExpensesProps) {
         </div>
       )}
 
-      {/* Split Expenses + Who Owes Who */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-          <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
-            <h3 className="text-sm font-medium text-gray-600 flex items-center gap-2">
-              <Users className="w-4 h-4" />
-              {t('Split Expenses')}
-            </h3>
-            <span className="text-xs text-gray-400">{travellerNames.length} {t('travellers')}</span>
-          </div>
-          {Object.keys(unsettledByCurrency).length === 0 ? (
-            <p className="text-sm text-gray-400">{t('No unsettled shared expenses to split')}</p>
-          ) : (
-            <div className="space-y-2">
-              {Object.entries(unsettledByCurrency).map(([currency, total]) => (
-                <div key={currency} className="flex items-center justify-between bg-purple-50 rounded-lg px-3 py-2">
-                  <div className="text-sm text-gray-600">
-                    <span className="font-medium text-gray-900">{currency} {total.toFixed(2)}</span>
-                    <span className="text-gray-400 mx-2">÷</span>
-                    <span>{travellerNames.length} {t('travellers')}</span>
-                  </div>
-                  <div className="text-base font-bold text-purple-700">
-                    {currency} {(total / travellerNames.length).toFixed(2)} / person
-                  </div>
-                </div>
-              ))}
-              <p className="text-xs text-gray-400 mt-1">{t('Based on unsettled shared expenses only')}</p>
-            </div>
-          )}
-        </div>
-
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+      {/* Who Owes Who */}
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
           <h3 className="text-sm font-medium text-gray-600 mb-3 flex items-center gap-2">
             <Users className="w-4 h-4" />
             {t('Who Owes Who')}
@@ -591,7 +612,6 @@ export function TravelExpenses({ currentTrip }: TravelExpensesProps) {
             </>
           )}
         </div>
-      </div>
 
       {/* Form Modal */}
       {showForm && (
@@ -612,7 +632,7 @@ export function TravelExpenses({ currentTrip }: TravelExpensesProps) {
                 <button
                   type="button"
                   onClick={openDatePicker}
-                  className={`w-full px-3 py-2 border border-gray-300 rounded-lg text-left transition-colors hover:bg-gray-50 focus:ring-2 focus:ring-purple-400 focus:border-transparent ${formData.date ? 'text-gray-900 font-medium' : 'text-gray-400'}`}
+                  className={`w-full px-3 py-2 h-10 border border-gray-300 rounded-lg text-left transition-colors hover:bg-gray-50 focus:ring-2 focus:ring-purple-400 focus:border-transparent ${formData.date ? 'text-gray-900 font-medium' : 'text-gray-400'}`}
                 >
                   {formData.date ? format(parseISO(formData.date), 'MMM dd, yyyy') : 'Select date...'}
                 </button>
@@ -625,7 +645,7 @@ export function TravelExpenses({ currentTrip }: TravelExpensesProps) {
                   required
                   value={formData.item}
                   onChange={(e) => setFormData({ ...formData, item: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-400 focus:border-transparent"
+                  className="w-full px-3 py-2 h-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-400 focus:border-transparent"
                   placeholder="Expense description"
                 />
               </div>
@@ -636,7 +656,7 @@ export function TravelExpenses({ currentTrip }: TravelExpensesProps) {
                   <select
                     value={formData.currency}
                     onChange={(e) => setFormData({ ...formData, currency: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-400 focus:border-transparent"
+                    className="w-full px-3 py-2 h-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-400 focus:border-transparent"
                   >
                     {CURRENCIES.map(curr => (
                       <option key={curr} value={curr}>{curr}</option>
@@ -652,7 +672,7 @@ export function TravelExpenses({ currentTrip }: TravelExpensesProps) {
                     required
                     value={formData.price}
                     onChange={(e) => setFormData({ ...formData, price: parseFloat(e.target.value) })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-400 focus:border-transparent"
+                    className="w-full px-3 py-2 h-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-400 focus:border-transparent"
                     placeholder="0.00"
                   />
                 </div>
@@ -663,7 +683,7 @@ export function TravelExpenses({ currentTrip }: TravelExpensesProps) {
                 <select
                   value={formData.category}
                   onChange={(e) => setFormData({ ...formData, category: e.target.value as Expense['category'] })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-400 focus:border-transparent"
+                  className="w-full px-3 py-2 h-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-400 focus:border-transparent"
                 >
                   {CATEGORIES.map(cat => (
                     <option key={cat} value={cat}>{cat}</option>
@@ -692,7 +712,7 @@ export function TravelExpenses({ currentTrip }: TravelExpensesProps) {
                       if (v === 'all' || v === 'solo') setFormData({ ...formData, splitWith: v });
                       else setFormData({ ...formData, splitWith: [] });
                     }}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-400 focus:border-transparent"
+                    className="w-full px-3 py-2 h-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-400 focus:border-transparent"
                   >
                     <option value="all">{t('All travellers')}</option>
                     <option value="solo">{t('Solo (no split)')}</option>
@@ -839,6 +859,18 @@ export function TravelExpenses({ currentTrip }: TravelExpensesProps) {
       )}
 
       {/* Expenses List */}
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+          <input
+            type="checkbox"
+            checked={allExpensesSettled}
+            disabled={expenses.length === 0}
+            onChange={(e) => setAllExpensesSettled(e.target.checked)}
+            className="w-4 h-4 text-purple-400 rounded focus:ring-purple-400"
+          />
+          {t('Mark all as settled')}
+        </label>
+      </div>
       <div className="space-y-4">
         {Object.entries(groupedByDate).length === 0 ? (
           <div className="text-center py-12 bg-white rounded-lg border border-gray-200">

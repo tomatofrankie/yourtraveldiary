@@ -68,6 +68,7 @@ function getTripIdsForCurrentUser(): string[] {
 }
 
 function saveTripToFirestore(trip: Trip) {
+  if (!getCurrentUserId()) return;
   try {
     const safeTrip = ensureTripOwnership(trip);
     const ref = doc(collection(db, 'trips'), safeTrip.id);
@@ -78,6 +79,7 @@ function saveTripToFirestore(trip: Trip) {
 }
 
 function deleteTripFromFirestore(id: string) {
+  if (!getCurrentUserId()) return;
   try {
     const ref = doc(collection(db, 'trips'), id);
     void deleteDoc(ref);
@@ -87,6 +89,7 @@ function deleteTripFromFirestore(id: string) {
 }
 
 function saveScheduleToFirestore(item: ScheduleItem) {
+  if (!getCurrentUserId()) return;
   try {
     const ref = doc(collection(db, 'schedules'), item.id);
     void setDoc(ref, item, { merge: true });
@@ -96,6 +99,7 @@ function saveScheduleToFirestore(item: ScheduleItem) {
 }
 
 function deleteScheduleFromFirestore(id: string) {
+  if (!getCurrentUserId()) return;
   try {
     const ref = doc(collection(db, 'schedules'), id);
     void deleteDoc(ref);
@@ -105,6 +109,7 @@ function deleteScheduleFromFirestore(id: string) {
 }
 
 function saveExpenseToFirestore(expense: Expense) {
+  if (!getCurrentUserId()) return;
   try {
     const ref = doc(collection(db, 'expenses'), expense.id);
     void setDoc(ref, expense, { merge: true });
@@ -114,6 +119,7 @@ function saveExpenseToFirestore(expense: Expense) {
 }
 
 function deleteExpenseFromFirestore(id: string) {
+  if (!getCurrentUserId()) return;
   try {
     const ref = doc(collection(db, 'expenses'), id);
     void deleteDoc(ref);
@@ -123,6 +129,7 @@ function deleteExpenseFromFirestore(id: string) {
 }
 
 function saveShoppingToFirestore(item: ShoppingItem) {
+  if (!getCurrentUserId()) return;
   try {
     const ref = doc(collection(db, 'shoppingItems'), item.id);
     void setDoc(ref, item, { merge: true });
@@ -132,6 +139,7 @@ function saveShoppingToFirestore(item: ShoppingItem) {
 }
 
 function deleteShoppingFromFirestore(id: string) {
+  if (!getCurrentUserId()) return;
   try {
     const ref = doc(collection(db, 'shoppingItems'), id);
     void deleteDoc(ref);
@@ -141,6 +149,7 @@ function deleteShoppingFromFirestore(id: string) {
 }
 
 function saveTravelInfoToFirestore(info: TravelInfo) {
+  if (!getCurrentUserId()) return;
   try {
     const ref = doc(collection(db, 'travelInfo'), info.id);
     void setDoc(ref, info, { merge: true });
@@ -150,6 +159,7 @@ function saveTravelInfoToFirestore(info: TravelInfo) {
 }
 
 function deleteTravelInfoFromFirestore(id: string) {
+  if (!getCurrentUserId()) return;
   try {
     const ref = doc(collection(db, 'travelInfo'), id);
     void deleteDoc(ref);

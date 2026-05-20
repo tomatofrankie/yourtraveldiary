@@ -15,7 +15,7 @@ export interface Trip {
   destinations: DestinationSegment[];
   themeColor?: string;
   coverPhoto?: string;
-  favorite?: boolean;
+  favorite?: Record<string, boolean>; // userId -> isFavorite
   sharedWith?: string[]; // UIDs granted full edit/delete access
 }
 
